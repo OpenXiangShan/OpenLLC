@@ -1,0 +1,9 @@
+[submodule "coupledL2"]
+	path = coupledL2
+	url = https://github.com/OpenXiangShan/CoupledL2
+[submodule "rocket-chip"]
+	path = rocket-chip
+	url = https://github.com/OpenXiangShan/rocket-chip
+[submodule "utility"]
+	path = utility
+	url = https://github.com/OpenXiangShan/Utility
