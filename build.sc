@@ -78,10 +78,18 @@ object utility extends SbtModule with HasChisel {
   override def moduleDeps = super.moduleDeps ++ Seq(rocketchip)
  }
 
+object huancun extends SbtModule with HasChisel {
+  override def millSourcePath = os.pwd / "coupledL2" / "HuanCun"
+
+  override def moduleDeps = super.moduleDeps ++ Seq(
+    rocketchip, utility
+  )
+}
+
 object coupledL2 extends SbtModule with HasChisel {
   override def millSourcePath = os.pwd / "coupledL2"
   override def moduleDeps = super.moduleDeps ++ Seq(
-    rocketchip, utility
+    rocketchip, utility, huancun
   )
 }
 

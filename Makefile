@@ -2,6 +2,9 @@ init:
 	git submodule update --init
 	cd rocket-chip && git submodule update --init hardfloat cde
 
+test-top-l3:
+	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build
+
 clean:
 	rm -rf ./build
 
