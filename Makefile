@@ -5,6 +5,9 @@ init:
 test-top-l3:
 	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build
 
+test-top-l2l3:
+	mill -i OpenLLC.test.runMain openLLC.TestTop_L2L3 -td build
+
 clean:
 	rm -rf ./build
 
