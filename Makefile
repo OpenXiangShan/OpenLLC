@@ -1,12 +1,15 @@
 init:
-	git submodule update --init
+	git submodule update --recursive --init
 	cd rocket-chip && git submodule update --init hardfloat cde
 
 test-top-l3:
 	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build
 
 test-top-l2l3:
-	mill -i OpenLLC.test.runMain openLLC.TestTop_L2L3 -td build
+	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_SingleCore -td build
+
+test-top-l2l3l2:
+	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_DualCore -td build
 
 clean:
 	rm -rf ./build
