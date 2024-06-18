@@ -1,5 +1,5 @@
 init:
-	git submodule update --recursive --init
+	git submodule update --init
 	cd rocket-chip && git submodule update --init hardfloat cde
 
 test-top-l3:
