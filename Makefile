@@ -1,6 +1,10 @@
 init:
 	git submodule update --init
 	cd rocket-chip && git submodule update --init hardfloat cde
+	cd coupledL2 && make init
+
+compile:
+	mill -i OpenLLC.compile
 
 test-top-l3:
 	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build
