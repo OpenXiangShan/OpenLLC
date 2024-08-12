@@ -88,6 +88,8 @@ class UpwardsLinkMonitor(implicit p: Parameters) extends LLCModule {
   txOut.linkactivereq := !reset.asBool
   rxOut.linkactiveack := RegNext(rxOut.linkactivereq) || !rxDeact
 
+  io.out.syscoack := RegNext(io.out.syscoreq)
+
   dontTouch(io.out)
 
   def setSrcID[T <: Bundle](in: DecoupledIO[T], srcID: UInt): DecoupledIO[T] = {

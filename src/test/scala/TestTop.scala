@@ -115,7 +115,18 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1)(implic
     )
   }))))
 
-  val l3 = LazyModule(new DummyLLC(numCores)(p.alter((_, _, _) => {
+  val l3 = LazyModule(new OpenLLC()(new Config((site, here, up) => {
+    case OpenLLCParamKey => OpenLLCParam(
+      clientCaches = Seq.fill(numCores)(cacheParams.copy(
+        ways = 2,
+        sets = 2,
+      )),
+      banks = 1,
+      ways = 2,
+      sets = 2
+    )
+  })))
+  val l3xbar = LazyModule(new DummyLLC(1)(p.alter((_, _, _) => {
     case CHIIssue => "B"
   })))
   val ram = LazyModule(new AXI4RAM(AddressSet(0, 0xff_ffffL), beatBytes = 32))
@@ -157,7 +168,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1)(implic
   ram.node := 
     AXI4Xbar() :=
     AXI4Fragmenter() :=
-    l3.axi4node
+    l3xbar.axi4node
 
   lazy val module = new LazyModuleImp(this) {
     val timer = WireDefault(0.U(64.W))
@@ -183,7 +194,9 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1)(implic
     }
 
     l2_nodes.zipWithIndex.foreach { case (l2, i) =>
-      l3.module.io.rn(i) <> l2.module.io_chi
+      val chilogger = CHILogger(s"L3_L2[${i}]", true)
+      chilogger.io.up <> l2.module.io_chi
+      l3.module.io.rn(i) <> chilogger.io.down
       dontTouch(l2.module.io)
 
       l2.module.io.hartId := i.U
@@ -191,6 +204,24 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1)(implic
       l2.module.io.debugTopDown := DontCare
       l2.module.io.l2_tlb_req <> DontCare
     }
+
+    val chilogger = CHILogger(s"MEM_L3", true)
+    l3xbar.module.io.rn(0) <> chilogger.io.down
+    chilogger.io.up.tx.req <> l3.module.io.sn.tx.req
+    chilogger.io.up.tx.dat <> l3.module.io.sn.tx.dat
+    chilogger.io.up.tx.rsp := DontCare
+    chilogger.io.up.tx.linkactivereq := l3.module.io.sn.tx.linkactivereq
+    chilogger.io.up.txsactive := l3.module.io.sn.txsactive
+    chilogger.io.up.rx.snp := DontCare
+    chilogger.io.up.rx.linkactiveack := l3.module.io.sn.rx.linkactiveack
+    chilogger.io.up.syscoreq := true.B
+
+    l3.module.io.sn.tx.linkactiveack := chilogger.io.up.tx.linkactiveack
+    l3.module.io.sn.rx.rsp <> chilogger.io.up.rx.rsp
+    l3.module.io.sn.rx.dat <> chilogger.io.up.rx.dat
+    l3.module.io.sn.rx.linkactivereq := chilogger.io.up.rx.linkactivereq
+    l3.module.io.sn.rxsactive := chilogger.io.up.rxsactive
+    l3.module.io.nodeID := numCores.U(NODEID_WIDTH.W)
   }
 }
 

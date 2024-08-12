@@ -24,7 +24,6 @@ import freechips.rocketchip.amba.axi4.AXI4Parameters._
 import freechips.rocketchip.diplomacy._
 import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2chi._
-import coupledL2.tl2chi.CHICohStates._
 import utility._
 
 class DummyLLC(numRNs: Int = 1)(implicit p: Parameters) extends LazyModule with HasOpenLLCParameters {
@@ -87,7 +86,6 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
 
   val snpGotData = RegInit(false.B)
   val snpGotDirty = RegInit(false.B)
-  val cbwrdataValid = RegInit(false.B)
 
   val be = Reg(UInt(beatBytes.W))
 
@@ -110,7 +108,6 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
     refillBeatCnt := 0.U
     snpGotData := false.B
     snpGotDirty := false.B
-    cbwrdataValid := false.B
   }.elsewhen (valid && noSchedule && noWait) {
     valid := false.B
   }
@@ -130,9 +127,9 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
     val isWrite = isWriteBackFull || isWriteNoSnp
     assert(isSnoopableRead || isDataless || isWriteBackFull || isEvict || isNoSnp, "Unsupported opcode")
 
-    when (isNoSnp) {
-      assert((1.U << reqArb.io.out.bits.size) <= beatBytes.U)
-    }
+    // when (isNoSnp) {
+    //   assert((1.U << reqArb.io.out.bits.size) <= beatBytes.U)
+    // }
 
     when (isRead) {
       s_ar := false.B
@@ -185,8 +182,8 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
   val isReadNoSnp = req.opcode === ReadNoSnp
   ar.bits.id := 0.U
   ar.bits.addr := req.addr
-  ar.bits.len := Mux(isReadNoSnp, 0.U, (beatSize - 1).U)
-  ar.bits.size := Mux(isReadNoSnp, req.size, log2Ceil(beatBytes).U)
+  ar.bits.len := (beatSize - 1).U
+  ar.bits.size := log2Ceil(beatBytes).U
   ar.bits.burst := BURST_INCR
   ar.bits.lock := 0.U
   ar.bits.cache := Mux(
@@ -200,8 +197,8 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
   val isWriteNoSnp = req.opcode === WriteNoSnpFull || req.opcode === WriteNoSnpPtl
   aw.bits.id := 0.U
   aw.bits.addr := req.addr
-  aw.bits.len := Mux(isWriteNoSnp, 0.U, (beatSize - 1).U)
-  aw.bits.size := Mux(isWriteNoSnp, req.size, log2Ceil(beatBytes).U)
+  aw.bits.len := (beatSize - 1).U
+  aw.bits.size := log2Ceil(beatBytes).U
   aw.bits.burst := BURST_INCR
   aw.bits.lock := 0.U
   aw.bits.cache := Mux(
@@ -213,8 +210,8 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
   aw.bits.qos := 0.U
 
   w.bits.data := releaseBuf(wBeatCnt)
-  w.bits.strb := Mux(isWriteNoSnp, be, Fill(beatBytes, cbwrdataValid || snpGotDirty))
-  w.bits.last := isWriteNoSnp || wBeatCnt === (beatSize - 1).U
+  w.bits.strb := Fill(beatBytes, true.B)
+  w.bits.last := wBeatCnt === (beatSize - 1).U
 
   for (i <- 0 until numRNs) {
     val snp = rn(i).rx.snp.bits
@@ -289,7 +286,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
     }
     when (rn(i).rx.dat.fire) {
       refillBeatCnt := refillBeatCnt + 1.U
-      when (isReadNoSnp || refillBeatCnt === (beatSize - 1).U) {
+      when (refillBeatCnt === (beatSize - 1).U) {
         s_compdata := true.B
       }
     }
@@ -322,7 +319,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
       when (snpBeatCnt(i) === (beatSize - 1).U) {
         w_snpresp(i) := true.B
 
-        when ((resp & CHICohStates.PassDirty) =/= 0.U) {
+        when (resp === CHICohStates.SC_PD) {
           // SD state is not supported on RNs because we adopt MESI coherency rather than MOESI for now.
           // Therefore when other peer-RNs are snooped to Shared state and pass dirty to HN, HN is reponsible
           // for either caching dirty copy in local cache of HN, or copying back the dirty data into SN.
@@ -342,22 +339,21 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
         w_compack := true.B
       }
 
-      when (rn(i).tx.dat.fire && rn(i).tx.dat.bits.opcode === CopyBackWrData) {
+      when (rn(i).tx.dat.fire && (rn(i).tx.dat.bits.opcode === CopyBackWrData || rn(i).tx.dat.bits.opcode === NonCopyBackWrData)) {
         releaseBeatCnt := releaseBeatCnt + 1.U
         val beatIdx = rn(i).tx.dat.bits.dataID >> 1
         val data = rn(i).tx.dat.bits.data
         releaseBuf(beatIdx) := data
-        cbwrdataValid := (rn(i).tx.dat.bits.resp & PassDirty) =/= I
         when (releaseBeatCnt === (beatSize - 1).U) {
           w_wrdata := true.B
         }
       }
 
-      when (rn(i).tx.dat.fire && rn(i).tx.dat.bits.opcode === NonCopyBackWrData) {
-        releaseBuf(0) := rn(i).tx.dat.bits.data
-        be := rn(i).tx.dat.bits.be
-        w_wrdata := true.B
-      }
+      // when (rn(i).tx.dat.fire && rn(i).tx.dat.bits.opcode === NonCopyBackWrData) {
+      //   releaseBuf(0) := rn(i).tx.dat.bits.data
+      //   be := rn(i).tx.dat.bits.be
+      //   w_wrdata := true.B
+      // }
     }
   }
 
@@ -370,6 +366,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
 }
 
 class ReceiverLinkMonitor(implicit p: Parameters) extends LLCModule with HasCHIMsgParameters {
+  private val maxLCreditNum = 15
   val io = IO(new Bundle() {
     val in = Flipped(new PortIO)
     val out = new DecoupledPortIO
@@ -390,9 +387,9 @@ class ReceiverLinkMonitor(implicit p: Parameters) extends LLCModule with HasCHIM
   /* IO assignment */
   val txreqDeact, txrspDeact, txdatDeact = Wire(Bool())
   val txDeact = txreqDeact && txrspDeact && txdatDeact
-  LCredit2Decoupled(io.in.tx.req, io.out.tx.req, LinkState(txState), txreqDeact, Some("rxreq"))
-  LCredit2Decoupled(io.in.tx.rsp, io.out.tx.rsp, LinkState(txState), txrspDeact, Some("rxrsp"))
-  LCredit2Decoupled(io.in.tx.dat, io.out.tx.dat, LinkState(txState), txdatDeact, Some("rxdat"))
+  LCredit2Decoupled(io.in.tx.req, io.out.tx.req, LinkState(txState), txreqDeact, Some("rxreq"), maxLCreditNum)
+  LCredit2Decoupled(io.in.tx.rsp, io.out.tx.rsp, LinkState(txState), txrspDeact, Some("rxrsp"), maxLCreditNum)
+  LCredit2Decoupled(io.in.tx.dat, io.out.tx.dat, LinkState(txState), txdatDeact, Some("rxdat"), maxLCreditNum)
   Decoupled2LCredit(io.out.rx.snp, io.in.rx.snp, LinkState(rxState), Some("txsnp"))
   Decoupled2LCredit(io.out.rx.rsp, io.in.rx.rsp, LinkState(rxState), Some("txrsp"))
   Decoupled2LCredit(io.out.rx.dat, io.in.rx.dat, LinkState(rxState), Some("txdat"))
@@ -402,6 +399,5 @@ class ReceiverLinkMonitor(implicit p: Parameters) extends LLCModule with HasCHIM
   io.in.tx.linkactiveack := RegNext(io.in.tx.linkactivereq) || !txDeact
 
   io.in.syscoack := RegNext(io.in.syscoreq)
-
   dontTouch(io.in)
 }
