@@ -7,3 +7,6 @@
 [submodule "utility"]
 	path = utility
 	url = https://github.com/OpenXiangShan/Utility
+[submodule "openNCB"]
+	path = openNCB
+	url = https://github.com/OpenXiangShan/OpenNCB

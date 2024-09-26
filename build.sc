@@ -93,6 +93,11 @@ object coupledL2 extends SbtModule with HasChisel {
   )
 }
 
+object openNCB extends SbtModule with HasChisel {
+  override def millSourcePath = os.pwd / "openNCB"
+  override def moduleDeps = super.moduleDeps ++ Seq(rocketchip)
+}
+
 object OpenLLC extends SbtModule with HasChisel with millbuild.common.OpenLLCModule {
 
   override def millSourcePath = millOuterCtx.millSourcePath
@@ -102,6 +107,8 @@ object OpenLLC extends SbtModule with HasChisel with millbuild.common.OpenLLCMod
   def utilityModule: ScalaModule = utility
 
   def coupledL2Module: ScalaModule = coupledL2
+
+  def openNCBModule: ScalaModule = openNCB
 
   object test extends SbtModuleTests with TestModule.ScalaTest {
     override def ivyDeps = super.ivyDeps() ++ Agg(
