@@ -1,0 +1,84 @@
+# This file describes the GitHub Actions workflow for continuous integration of OpenLLC
+
+name: CI
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  tl-test_L2L3L2:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Environments
+    env:
+      RUN_ARCHIVE: openLLC-tl-test-new-run-${{ github.sha }}.tar.gz
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Setup Clang 17
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod u+x llvm.sh
+          sudo ./llvm.sh 17
+
+      - name: Setup Verilator
+        run: |
+          wget https://raw.githubusercontent.com/OpenXiangShan/xs-env/master/install-verilator.sh
+          chmod u+x install-verilator.sh
+          sed -i 's/CC=clang/CC=clang-17/g' install-verilator.sh
+          sed -i 's/CXX=clang++/CXX=clang++-17/g' install-verilator.sh
+          sed -i 's/LINK=clang++/LINK=clang++-17/g' install-verilator.sh
+          sed -i 's/make -j8/make -j4/g' install-verilator.sh
+          bash install-verilator.sh
+
+      - name: Setup Scala
+        uses: olafurpg/setup-scala@v10
+
+      - name: Cache
+        id: cache
+        uses: coursier/cache-action@v5
+
+      - name: Setup Mill
+        uses: jodersky/setup-mill@v0.2.3
+        with:
+          mill-version: 0.11.1
+        
+      - name: Compile
+        run: make compile
+      
+      # Clean artifacts folder (./tl-test-new/run) after successful run
+      - name: Unit Test
+        run: |
+            git clone https://github.com/OpenXiangShan/tl-test-new
+            cd ./tl-test-new
+            sed -i 's/ari.target.*/ari.target = 240/g' ./configs/user.tltest.ini
+            rm -rf ./dut/OpenLLC && ln -s ../.. ./dut/OpenLLC
+            make openLLC-test-l2l3l2 run THREADS_BUILD=4 CXX_COMPILER=clang++-17
+            rm -rf run/*.vcd run/*.fst run/*.log run/*.db
+
+      - name: Tar up artifacts of Unit Test
+        run: |
+            test -d ./tl-test-new/run || mkdir -p ./tl-test-new/run
+            tar -zcf ${{ env.RUN_ARCHIVE }} ./tl-test-new/run
+
+      - name: Upload artifacts of Unit Test
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ github.workspace }}/${{ env.RUN_ARCHIVE }}
+          name: ${{ env.RUN_ARCHIVE }}
