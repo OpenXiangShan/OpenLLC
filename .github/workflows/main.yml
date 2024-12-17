@@ -58,7 +58,12 @@ jobs:
         uses: jodersky/setup-mill@v0.2.3
         with:
           mill-version: 0.11.1
-        
+
+      - name: Setup SQLite3
+        uses: ryohidaka/action-setup-sqlite@v1.2.0
+        with:
+          version: "3.43.2"
+
       - name: Compile
         run: make compile
       
