@@ -68,6 +68,9 @@ jobs:
             git clone https://github.com/OpenXiangShan/tl-test-new
             cd ./tl-test-new
             sed -i 's/ari.target.*/ari.target = 240/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable .*=.*/cmo.enable = 1/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable.cbo.clean.*=.*/cmo.enable.cbo.clean = 1/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable.cbo.flush.*=.*/cmo.enable.cbo.flush = 1/g' ./configs/user.tltest.ini
             rm -rf ./dut/OpenLLC && ln -s ../.. ./dut/OpenLLC
             make openLLC-test-l2l3l2 run THREADS_BUILD=4 CXX_COMPILER=clang++-17
             rm -rf run/*.vcd run/*.fst run/*.log run/*.db
