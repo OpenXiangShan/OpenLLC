@@ -76,11 +76,13 @@ jobs:
             rm -rf run/*.vcd run/*.fst run/*.log run/*.db
 
       - name: Tar up artifacts of Unit Test
+        if: always()
         run: |
             test -d ./tl-test-new/run || mkdir -p ./tl-test-new/run
             tar -zcf ${{ env.RUN_ARCHIVE }} ./tl-test-new/run
 
       - name: Upload artifacts of Unit Test
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           path: ${{ github.workspace }}/${{ env.RUN_ARCHIVE }}
