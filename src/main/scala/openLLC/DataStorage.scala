@@ -53,7 +53,7 @@ class DataStorage(implicit p: Parameters) extends LLCModule {
     val wdata = Input(new DSBlock())
   })
 
-  val array = Module(new SRAMTemplate(
+  val olc_data_array = Module(new SRAMTemplate(
     gen = new DSBlock,
     set = blocks,
     way = 1,
@@ -81,16 +81,16 @@ class DataStorage(implicit p: Parameters) extends LLCModule {
   // SRAM is written when the data block of the buffer is replaced
   val writeHit = writeIdx === writeBuffer.blockIdx
   val writeBack = !writeHit && wen
-  array.io.w.apply(writeBack, writeBuffer.data, writeBuffer.blockIdx, 1.U)
+  olc_data_array.io.w.apply(writeBack, writeBuffer.data, writeBuffer.blockIdx, 1.U)
 
   /* Read request response */
   val readHit = readIdx === writeBuffer.blockIdx
   val readBuffer = readHit && ren
-  array.io.r.apply(!readBuffer, readIdx)
+  olc_data_array.io.r.apply(!readBuffer, readIdx)
   val rdata_s1 = Mux(
     RegNext(readBuffer, false.B), 
     RegEnable(writeBuffer.data, 0.U.asTypeOf(new DSBlock), readBuffer),
-    array.io.r.resp.data(0)
+    olc_data_array.io.r.resp.data(0)
   )
   val rdata_s2 = RegEnable(rdata_s1, 0.U.asTypeOf(new DSBlock), RegNext(ren, false.B))
   io.rdata := rdata_s2

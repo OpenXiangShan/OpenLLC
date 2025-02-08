@@ -150,14 +150,14 @@ class SubDirectory[T <: Data](
   val tagWen  = io.tagWReq.valid
   val metaWen = io.metaWReq.valid
 
-  val tagArray = Module(new SRAMTemplate(UInt(tagBits.W), sets, ways, singlePort = true))
-  val metaArray = Module(new SRAMTemplate(chiselTypeOf(meta_init), sets, ways, singlePort = true))
+  val olcTagArray = Module(new SRAMTemplate(UInt(tagBits.W), sets, ways, singlePort = true))
+  val olcMetaArray = Module(new SRAMTemplate(chiselTypeOf(meta_init), sets, ways, singlePort = true))
 
   // Replacer
   require(replacement == "random" || replacement == "plru")
   val repl = ReplacementPolicy.fromString(replacement, ways)
   val random_repl = replacement == "random"
-  val replacer_sram_opt = if(random_repl) None else
+  val olc_replacer_sram_opt = if(random_repl) None else
     Some(Module(new SRAMTemplate(UInt(repl.nBits.W), sets, 1, singlePort = true, shouldReset = true)))
 
   val tagRead = Wire(Vec(ways, UInt(tagBits.W)))
@@ -179,8 +179,8 @@ class SubDirectory[T <: Data](
   val req_s3 = RegEnable(req_s2, 0.U.asTypeOf(req_s2), reqValid_s2)
 
   /* Tag Read/Write */
-  tagRead := tagArray.io.r(io.read.fire, io.read.bits.set).resp.data
-  tagArray.io.w(
+  tagRead := olcTagArray.io.r(io.read.fire, io.read.bits.set).resp.data
+  olcTagArray.io.w(
     io.tagWReq.valid,
     io.tagWReq.bits.wtag,
     io.tagWReq.bits.set,
@@ -188,8 +188,8 @@ class SubDirectory[T <: Data](
   )
 
   /* Meta Read/Write */
-  metaRead := metaArray.io.r(io.read.fire, io.read.bits.set).resp.data
-  metaArray.io.w(
+  metaRead := olcMetaArray.io.r(io.read.fire, io.read.bits.set).resp.data
+  olcMetaArray.io.w(
     metaWen || !resetFinish,
     Mux(resetFinish, io.metaWReq.bits.wmeta, meta_init),
     Mux(resetFinish, io.metaWReq.bits.set, resetIdx),
@@ -224,7 +224,7 @@ class SubDirectory[T <: Data](
     }
     0.U
   } else {
-    val repl_sram_r = replacer_sram_opt.get.io.r(io.read.fire, io.read.bits.set).resp.data(0)
+    val repl_sram_r = olc_replacer_sram_opt.get.io.r(io.read.fire, io.read.bits.set).resp.data(0)
     val repl_state = RegEnable(repl_sram_r, 0.U(repl.nBits.W), reqValid_s2)
     repl_state
   }
@@ -239,7 +239,7 @@ class SubDirectory[T <: Data](
     val updateRefill = reqValid_s3 && req_s3.replacerInfo.refill
     replacerWen := updateHit || updateRefill
     val next_state_s3 = repl.get_next_state(repl_state_s3, way_s3)
-    replacer_sram_opt.get.io.w(
+    olc_replacer_sram_opt.get.io.w(
       !resetFinish || replacerWen,
       Mux(resetFinish, next_state_s3, 0.U),
       Mux(resetFinish, set_s3, resetIdx),
@@ -258,8 +258,8 @@ class SubDirectory[T <: Data](
   io.resp.bits.error := false.B
 
   dontTouch(io)
-  dontTouch(metaArray.io)
-  dontTouch(tagArray.io)
+  dontTouch(olcMetaArray.io)
+  dontTouch(olcTagArray.io)
 
   /* Reset logic */
   when(resetIdx === 0.U) {
