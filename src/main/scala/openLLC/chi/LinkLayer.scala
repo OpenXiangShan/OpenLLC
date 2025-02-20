@@ -109,30 +109,34 @@ class RNLinkMonitor(implicit p: Parameters) extends LLCModule {
   dontTouch(io.out)
 
   def setSrcID[T <: Bundle](in: DecoupledIO[T], srcID: UInt): DecoupledIO[T] = {
-    val out = Wire(in.cloneType)
+    val out = Wire(chiselTypeOf(in))
     out <> in
     out.bits.elements.filter(_._1 == "srcID").head._2 := srcID
     out
   }
 
   def setSrcID[T <: Bundle](in: ChannelIO[T], gen: T, srcID: UInt): ChannelIO[T] = {
-    val out = Wire(in.cloneType)
+    val flit = WireDefault(in.flit.asTypeOf(gen))
+    flit.elements.filter(_._1 == "srcID").head._2 := srcID
+    val out = Wire(chiselTypeOf(in))
     out <> in
-    out.flit.asTypeOf(gen).elements.filter(_._1 == "srcID").head._2 := srcID
+    out.flit := flit.asUInt
     out
   }
 
   def setTgtID[T <: Bundle](in: DecoupledIO[T], tgtID: UInt): DecoupledIO[T] = {
-    val out = Wire(in.cloneType)
+    val out = Wire(chiselTypeOf(in))
     out <> in
     out.bits.elements.filter(_._1 == "tgtID").head._2 := tgtID
     out
   }
 
   def setTgtID[T <: Bundle](in: ChannelIO[T], gen: T, tgtID: UInt): ChannelIO[T] = {
-    val out = Wire(in.cloneType)
+    val flit = WireDefault(in.flit.asTypeOf(gen))
+    flit.elements.filter(_._1 == "tgtID").head._2 := tgtID
+    val out = Wire(chiselTypeOf(in))
     out <> in
-    out.flit.asTypeOf(gen).elements.filter(_._1 == "tgtID").head._2 := tgtID
+    out.flit := flit.asUInt
     out
   }
 }
