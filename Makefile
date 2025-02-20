@@ -7,13 +7,13 @@ compile:
 	mill -i OpenLLC.compile
 
 test-top-l3:
-	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build
+	mill -i OpenLLC.test.runMain openLLC.TestTop_L3 -td build --target systemverilog --split-verilog
 
 test-top-l2l3:
-	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_SingleCore -td build
+	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_SingleCore -td build --target systemverilog --split-verilog
 
 test-top-l2l3l2:
-	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_DualCore -td build
+	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_DualCore -td build --target systemverilog --split-verilog
 
 clean:
 	rm -rf ./build
