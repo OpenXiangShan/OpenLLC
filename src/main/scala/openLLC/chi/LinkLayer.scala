@@ -116,11 +116,23 @@ class RNLinkMonitor(implicit p: Parameters) extends LLCModule {
   }
 
   def setSrcID[T <: Bundle](in: ChannelIO[T], gen: T, srcID: UInt): ChannelIO[T] = {
-    val flit = WireDefault(in.flit.asTypeOf(gen))
-    flit.elements.filter(_._1 == "srcID").head._2 := srcID
+    // val flit = WireDefault(in.flit.asTypeOf(gen))
+    // flit.elements.filter(_._1 == "srcID").head._2 := srcID
+
+    val bundle = Wire(gen)
+    var lsb = 0
+    bundle.getElements.reverse.foreach { case e =>
+      val elementWidth = e.asUInt.getWidth
+      if (elementWidth > 0) {
+        e := in.flit(lsb + elementWidth - 1, lsb).asTypeOf(e.cloneType)
+        lsb += elementWidth
+      }
+    }
+    bundle.elements.filter(_._1 == "srcID").head._2 := srcID
+
     val out = Wire(chiselTypeOf(in))
     out <> in
-    out.flit := flit.asUInt
+    out.flit := Cat(bundle.getElements.map(_.asUInt))
     out
   }
 
@@ -132,11 +144,20 @@ class RNLinkMonitor(implicit p: Parameters) extends LLCModule {
   }
 
   def setTgtID[T <: Bundle](in: ChannelIO[T], gen: T, tgtID: UInt): ChannelIO[T] = {
-    val flit = WireDefault(in.flit.asTypeOf(gen))
-    flit.elements.filter(_._1 == "tgtID").head._2 := tgtID
+    val bundle = Wire(gen)
+    var lsb = 0
+    bundle.getElements.reverse.foreach { case e =>
+      val elementWidth = e.asUInt.getWidth
+      if (elementWidth > 0) {
+        e := in.flit(lsb + elementWidth - 1, lsb).asTypeOf(e.cloneType)
+        lsb += elementWidth
+      }
+    }
+    bundle.elements.filter(_._1 == "tgtID").head._2 := tgtID
+
     val out = Wire(chiselTypeOf(in))
     out <> in
-    out.flit := flit.asUInt
+    out.flit := Cat(bundle.getElements.map(_.asUInt))
     out
   }
 }
