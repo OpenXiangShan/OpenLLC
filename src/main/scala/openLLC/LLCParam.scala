@@ -45,6 +45,7 @@ case class OpenLLCParam
   enableRollingDB: Boolean = true,
   elaboratedTopDown: Boolean = true,
   hartIds: Seq[Int] = Seq[Int](),
+  fakeLatency: Int = 20,
 
   // Network layer SAM
   sam: Seq[(AddressSet, Int)] = Seq(AddressSet.everything -> 0)

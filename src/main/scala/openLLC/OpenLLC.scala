@@ -22,6 +22,7 @@ import chisel3.util._
 import freechips.rocketchip.diplomacy._
 import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2chi.{PortIO, CHIIssue}
+import utility.{RegNextN}
 
 class OpenLLC(implicit p: Parameters) extends LLCModule with HasClientInfo {
   private val sizeBytes = cacheParams.toCacheParams.capacity.toDouble 
@@ -80,7 +81,30 @@ class OpenLLC(implicit p: Parameters) extends LLCModule with HasClientInfo {
   snLinkMonitor.io.in <> mmioMerger.io.out
   snLinkMonitor.io.nodeID := io.nodeID
 
-  io.sn <> snLinkMonitor.io.out
+  // io.sn <> snLinkMonitor.io.out
+  io.sn.tx.req.flitpend := RegNextN(snLinkMonitor.io.out.tx.req.flitpend, cacheParams.fakeLatency, Some(false.B))
+  io.sn.tx.req.flitv := RegNextN(snLinkMonitor.io.out.tx.req.flitv, cacheParams.fakeLatency, Some(false.B))
+  io.sn.tx.req.flit := RegNextN(snLinkMonitor.io.out.tx.req.flit, cacheParams.fakeLatency, Some(0.U))
+  io.sn.tx.dat.flitpend := RegNextN(snLinkMonitor.io.out.tx.dat.flitpend, cacheParams.fakeLatency, Some(false.B))
+  io.sn.tx.dat.flitv := RegNextN(snLinkMonitor.io.out.tx.dat.flitv, cacheParams.fakeLatency, Some(false.B))
+  io.sn.tx.dat.flit := RegNextN(snLinkMonitor.io.out.tx.dat.flit, cacheParams.fakeLatency, Some(0.U))
+  io.sn.rx.rsp.lcrdv := RegNextN(snLinkMonitor.io.out.rx.rsp.lcrdv, cacheParams.fakeLatency, Some(false.B))
+  io.sn.rx.dat.lcrdv := RegNextN(snLinkMonitor.io.out.rx.dat.lcrdv, cacheParams.fakeLatency, Some(false.B))
+  io.sn.tx.linkactivereq := RegNextN(snLinkMonitor.io.out.tx.linkactivereq, cacheParams.fakeLatency, Some(false.B))
+  io.sn.rx.linkactiveack := RegNextN(snLinkMonitor.io.out.rx.linkactiveack, cacheParams.fakeLatency, Some(false.B))
+  io.sn.txsactive := RegNextN(snLinkMonitor.io.out.txsactive, cacheParams.fakeLatency, Some(false.B))
+
+  snLinkMonitor.io.out.rx.rsp.flitpend := RegNextN(io.sn.rx.rsp.flitpend, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rx.rsp.flitv := RegNextN(io.sn.rx.rsp.flitv, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rx.rsp.flit := RegNextN(io.sn.rx.rsp.flit, cacheParams.fakeLatency, Some(0.U))
+  snLinkMonitor.io.out.rx.dat.flitpend := RegNextN(io.sn.rx.dat.flitpend, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rx.dat.flitv := RegNextN(io.sn.rx.dat.flitv, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rx.dat.flit := RegNextN(io.sn.rx.dat.flit, cacheParams.fakeLatency, Some(0.U))
+  snLinkMonitor.io.out.tx.req.lcrdv := RegNextN(io.sn.tx.req.lcrdv, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.tx.dat.lcrdv := RegNextN(io.sn.tx.dat.lcrdv, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rx.linkactivereq := RegNextN(io.sn.rx.linkactivereq, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.tx.linkactiveack := RegNextN(io.sn.tx.linkactiveack, cacheParams.fakeLatency, Some(false.B))
+  snLinkMonitor.io.out.rxsactive := RegNextN(io.sn.rxsactive, cacheParams.fakeLatency, Some(false.B))
 
   topDown match {
     case Some(t) =>
