@@ -184,7 +184,11 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
 
   lazy val module = new LazyModuleImp(this) {
 
-    val time_sim = IO(Input(UInt(64.W)))
+    val time_sim = if (extTime) {
+      IO(Input(UInt(64.W)))
+    } else {
+      WireDefault(0.U(64.W))
+    }
 
     val timer = WireDefault(0.U(64.W))
     val logEnable = WireDefault(false.B)
@@ -243,7 +247,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
           rxsnpflit = l2.module.io_chi.rx.snp.flit, rxsnpflitv = l2.module.io_chi.rx.snp.flitv,
           txrspflit = l2.module.io_chi.tx.rsp.flit, txrspflitv = l2.module.io_chi.tx.rsp.flitv,
           txdatflit = l2.module.io_chi.tx.dat.flit, txdatflitv = l2.module.io_chi.tx.dat.flitv,
-          time = time_sim, timev = true.B
+          time = time_sim, timev = extTime.B
         )
       }
 
@@ -268,7 +272,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
         rxrspflit = l3.io.sn.rx.rsp.flit, rxrspflitv = l3.io.sn.rx.rsp.flitv,
         rxdatflit = l3.io.sn.rx.dat.flit, rxdatflitv = l3.io.sn.rx.dat.flitv,
         txdatflit = l3.io.sn.tx.dat.flit, txdatflitv = l3.io.sn.tx.dat.flitv,
-        time = time_sim, timev = true.B
+        time = time_sim, timev = extTime.B
       )
     }
 
