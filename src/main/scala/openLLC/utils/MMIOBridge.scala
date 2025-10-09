@@ -33,7 +33,7 @@ class MMIODiverger(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
   })
 
   def reqFromMMIO(req: CHIREQ): Bool = req.txnID(TXNID_WIDTH - 1)
-  def datFromMMIO(dat: CHIDAT): Bool = dat.opcode === NonCopyBackWrData
+  def datFromMMIO(dat: CHIDAT): Bool = dat.opcode === NonCopyBackWrData && !dat.txnID(TXNID_WIDTH - 1)
 
   val mmioReqArb = Module(new FastArbiter(new CHIREQ(), numRNs))
   val mmioDatArb = Module(new FastArbiter(new CHIDAT(), numRNs))

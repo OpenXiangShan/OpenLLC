@@ -41,6 +41,10 @@ class Task(implicit p: Parameters) extends LLCBundle {
   val off = UInt(offsetBits.W)
   val size = UInt(SIZE_WIDTH.W)
 
+  // AMO
+  val amo = Bool()
+  val AMOrefillTask = Bool()
+
   // Refill task
   val refillTask = Bool() // is task from RefillUnit
   val bufID = UInt(log2Ceil(mshrs.refill).W)
@@ -171,6 +175,7 @@ class PipeStatus(implicit p: Parameters) extends LLCBundle {
   val sets = Vec(5, UInt(setBits.W))
   val reqIDs = Vec(5, UInt(TXNID_WIDTH.W))
   val valids = Vec(5, Bool())
+  val amos = Vec(5, Bool())
 
   def s2_tag = tags(0)
   def s3_tag = tags(1)
@@ -195,6 +200,12 @@ class PipeStatus(implicit p: Parameters) extends LLCBundle {
   def s4_valid = valids(2)
   def s5_valid = valids(3)
   def s6_valid = valids(4)
+
+  def s2_amo = amos(0)
+  def s3_amo = amos(1)
+  def s4_amo = amos(2)
+  def s5_amo = amos(3)
+  def s6_amo = amos(4)
 }
 
 class BlockInfo(implicit p: Parameters) extends LLCBundle {
