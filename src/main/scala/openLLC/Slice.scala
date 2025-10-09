@@ -31,6 +31,7 @@ class Slice()(implicit p: Parameters) extends LLCModule {
     val snpMask = Output(Vec(numRNs, Bool()))
     val msStatus = topDownOpt.map(_ => Vec(mshrs.response, ValidIO(new ResponseInfo())))
     val l3Miss = Output(Bool())
+    val l3AMOSingleHitTooMuch = Output(Bool())
   })
 
   val txUp = io.in.rx
@@ -65,6 +66,16 @@ class Slice()(implicit p: Parameters) extends LLCModule {
   val memUnit = Module(new MemUnit())
   val responseUnit = Module(new ResponseUnit())
   val snpUnit = Module(new SnoopUnit())
+
+  val atomicsUnit = Module(new AtomicsUnitL3())
+
+  /* atomics accelerate */
+  atomicsUnit.io.fromMainPipe <> mainPipe.io.toAtomicsUnit
+  atomicsUnit.io.fromResponseUnit <> responseUnit.io.toAtomicsUnit
+  atomicsUnit.io.AMOrefillTask <> reqArb.io.AMOrefTask_s1
+  atomicsUnit.io.datafromAMO <> mainPipe.io.datafromAtomicsUnit
+  atomicsUnit.io.blockfromAMO <> mainPipe.io.blockfromAtomicsUnit
+  atomicsUnit.io.blockReqArb <> reqArb.io.atomicsInfo
   
   /* Connect upwards channels */
   rxreqUp.io.req <> rxUp.req
@@ -131,6 +142,7 @@ class Slice()(implicit p: Parameters) extends LLCModule {
   responseUnit.io.rnRxrsp <> rxrspUp.io.out
   responseUnit.io.snRxdat <> rxdatDown.io.out
   responseUnit.io.snRxrsp <> rxrspDown.io.out
+  responseUnit.io.toAtomicsUnit <> atomicsUnit.io.fromResponseUnit
 
   snpUnit.io.in <> mainPipe.io.snoopTask_s4
   snpUnit.io.respInfo <> responseUnit.io.respInfo
@@ -148,4 +160,6 @@ class Slice()(implicit p: Parameters) extends LLCModule {
   io.l3Miss := Cat(responseUnit.io.respInfo.map { r =>
     r.valid && r.bits.is_miss
   }).orR
+
+  io.l3AMOSingleHitTooMuch := mainPipe.io.l3AMOSingleHitTooMuch
 }

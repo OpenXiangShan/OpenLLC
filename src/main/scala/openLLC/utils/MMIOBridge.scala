@@ -21,6 +21,7 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2chi._
+import cc.xiangshan.openncb.NCBParameters
 import utility.{FastArbiter}
 
 class MMIODiverger(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
@@ -33,7 +34,7 @@ class MMIODiverger(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
   })
 
   def reqFromMMIO(req: CHIREQ): Bool = req.txnID(TXNID_WIDTH - 1)
-  def datFromMMIO(dat: CHIDAT): Bool = dat.opcode === NonCopyBackWrData
+  def datFromMMIO(dat: CHIDAT): Bool = dat.opcode === NonCopyBackWrData && !dat.txnID(TXNID_WIDTH - 1)
 
   val mmioReqArb = Module(new FastArbiter(new CHIREQ(), numRNs))
   val mmioDatArb = Module(new FastArbiter(new CHIDAT(), numRNs))

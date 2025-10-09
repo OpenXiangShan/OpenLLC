@@ -28,6 +28,7 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
     /* receive incoming tasks from s1 */
     val busTask_s1 = Flipped(DecoupledIO(new Task()))
     val refillTask_s1 = Flipped(DecoupledIO(new Task()))
+    val AMOrefTask_s1 = Flipped(DecoupledIO(new Task()))
 
     /* read local/client directory */
     val dirRead_s1 = DecoupledIO(new DirRead())
@@ -44,6 +45,7 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
     val respInfo = Flipped(Vec(mshrs.response, ValidIO(new ResponseInfo())))
     val snpInfo = Flipped(Vec(mshrs.snoop, ValidIO(new BlockInfo())))
     val memInfo = Flipped(Vec(mshrs.memory, ValidIO(new MemInfo())))
+    val atomicsInfo = Input(Bool())
   })
 
   val pipeInfo   = io.pipeInfo
@@ -67,9 +69,20 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
   val isCleanInvalid_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === CleanInvalid
   val isCleanShared_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === CleanShared
   val isWriteCleanFull_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === WriteCleanFull
+  val isAtomicSwap_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicSwap
+  val isAtomicLoad_ADD_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_ADD
+  val isAtomicLoad_CLR_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_CLR
+  val isAtomicLoad_SET_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_SET
+  val isAtomicLoad_EOR_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_EOR
+  val isAtomicLoad_SMAX_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_SMAX
+  val isAtomicLoad_SMIN_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_SMIN
+  val isAtomicLoad_UMAX_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_UMAX
+  val isAtomicLoad_UMIN_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === AtomicLoad_UMIN
 
   val isRead_s1  = isReadNotSharedDirty_s1 || isReadUnique_s1
   val isClean_s1 = isCleanInvalid_s1 || isCleanShared_s1 || isWriteCleanFull_s1
+  val isAMO_s1 = isAtomicSwap_s1 || isAtomicLoad_ADD_s1 || isAtomicLoad_CLR_s1 || isAtomicLoad_SET_s1 ||
+    isAtomicLoad_EOR_s1 || isAtomicLoad_SMAX_s1 || isAtomicLoad_SMIN_s1 || isAtomicLoad_UMAX_s1 || isAtomicLoad_UMIN_s1
 
   // To prevent data hazards caused by read-after-write conflicts in the directory,
   // blocking is required when the set of s1 is the same as that of s2 or s3
@@ -86,6 +99,14 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
   val sameReqID_s4 = pipeInfo.s4_valid && pipeInfo.s4_reqID === reqID_s1
   val sameReqID_s5 = pipeInfo.s5_valid && pipeInfo.s5_reqID === reqID_s1
   val sameReqID_s6 = pipeInfo.s6_valid && pipeInfo.s6_reqID === reqID_s1
+
+  val isAMO_s2 = pipeInfo.s2_valid && pipeInfo.s2_amo
+  val isAMO_s3 = pipeInfo.s2_valid && pipeInfo.s3_amo
+  val isAMO_s4 = pipeInfo.s2_valid && pipeInfo.s4_amo
+  val isAMO_s5 = pipeInfo.s2_valid && pipeInfo.s5_amo
+  val isAMO_s6 = pipeInfo.s2_valid && pipeInfo.s6_amo
+
+  val AMOrefill = task_s1.bits.AMOrefillTask
 
   // Since the stages within the MainPipe are non-blocking, when the sum of the requests being processed
   // in the buffer and the potential requests that might occupy the buffer in the MainPipe exceeds the 
@@ -105,8 +126,8 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
     (inflight_refill +& potential_refill) >= mshrs.refill.U
   )
   val blockByResp = !task_s1.bits.refillTask && (
-    Cat(respInfo.map(e => e.valid && Cat(e.bits.tag, e.bits.set) === Cat(tag_s1, set_s1))).orR ||
-    Cat(respInfo.map(e => e.valid && e.bits.reqID === reqID_s1)).orR ||
+    Cat(respInfo.map(e => e.valid && Cat(e.bits.tag, e.bits.set) === Cat(tag_s1, set_s1) && !AMOrefill)).orR ||
+    Cat(respInfo.map(e => e.valid && e.bits.reqID === reqID_s1 && !AMOrefill)).orR ||
     (inflight_response +& potential_response) >= mshrs.response.U
   )
   val blockBySnp = !task_s1.bits.refillTask && (
@@ -117,14 +138,17 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
     e.bits.opcode === WriteNoSnpFull && (task_s1.bits.refillTask || isClean_s1 || !e.bits.w_datRsp && isRead_s1))).orR ||
     Cat(memInfo.map(e => e.valid && e.bits.reqID === reqID_s1 && !task_s1.bits.refillTask)).orR ||
     (inflight_memAccess +& potential_memAccess) >= mshrs.memory.U
+  val blockByAMO = (isAMO_s2 || isAMO_s3 || isAMO_s4 || isAMO_s5 || isAMO_s6) && !(io.AMOrefTask_s1.valid)
 
-  val blockEntrance = blockByMainPipe || blockByRefill || blockByResp || blockByMem
+  val blockEntrance = blockByMainPipe || blockByRefill || blockByResp || blockByMem || blockByAMO
 
-  task_s1.valid := io.dirRead_s1.ready && (io.busTask_s1.valid || io.refillTask_s1.valid) && !blockEntrance
-  task_s1.bits := Mux(io.refillTask_s1.valid, io.refillTask_s1.bits, io.busTask_s1.bits)
+  task_s1.valid := io.dirRead_s1.ready && (io.busTask_s1.valid || io.refillTask_s1.valid || io.AMOrefTask_s1.valid) && !blockEntrance && !(io.atomicsInfo && !io.AMOrefTask_s1.valid)
+  task_s1.bits := Mux(io.AMOrefTask_s1.valid, io.AMOrefTask_s1.bits, Mux(io.refillTask_s1.valid, io.refillTask_s1.bits, io.busTask_s1.bits))
+  task_s1.bits.amo := isAMO_s1
 
-  io.busTask_s1.ready := io.dirRead_s1.ready && !io.refillTask_s1.valid && !blockEntrance
-  io.refillTask_s1.ready := io.dirRead_s1.ready && !blockEntrance
+  io.busTask_s1.ready := io.dirRead_s1.ready && !io.refillTask_s1.valid && !io.AMOrefTask_s1.valid && !blockEntrance && !io.atomicsInfo
+  io.refillTask_s1.ready := io.dirRead_s1.ready && !io.AMOrefTask_s1.valid && !blockEntrance && !io.atomicsInfo
+  io.AMOrefTask_s1.ready := io.dirRead_s1.ready && !blockEntrance
 
   def addrConnect(lset: UInt, ltag: UInt, rset: UInt, rtag: UInt) = {
     assert(lset.getWidth + ltag.getWidth == rset.getWidth + rtag.getWidth)

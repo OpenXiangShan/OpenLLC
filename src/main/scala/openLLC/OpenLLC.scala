@@ -43,6 +43,7 @@ class OpenLLC(implicit p: Parameters) extends LLCModule with HasClientInfo {
       val addrMatch = Vec(cacheParams.hartIds.length, Output(Bool()))
     }
     val l3Miss = Output(Bool())
+    val l3AMOSingleHitTooMuch = Output(Bool())
   })
 
   println(s"CHI Issue Version: ${p(CHIIssue)}")
@@ -92,4 +93,5 @@ class OpenLLC(implicit p: Parameters) extends LLCModule with HasClientInfo {
   }
 
   io.l3Miss := RegNext(Cat(slices.map(_.io.l3Miss)).orR)
+  io.l3AMOSingleHitTooMuch := RegNext(Cat(slices.map(_.io.l3AMOSingleHitTooMuch)).orR)
 }
