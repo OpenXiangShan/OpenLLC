@@ -46,7 +46,7 @@ class ResponseRequest(withData: Boolean)(implicit p: Parameters) extends LLCBund
 class ResponseEntry(implicit p: Parameters) extends TaskEntry {
   val state = new ResponseState()
   val data = new DSBlock()
-  val amo_data = UInt(64.W)
+  val amo_data = UInt(XLEN.W)
   val beatValids = Vec(beatSize, Bool())
   val is_miss = Bool()
   val is_amo = Bool()
@@ -61,7 +61,7 @@ class ResponseInfo(implicit p: Parameters) extends BlockInfo {
 }
 
 class AtomicsInfo(implicit p: Parameters) extends LLCBundle {
-  val ncbwrdata = UInt(64.W)
+  val ncbwrdata = UInt(XLEN.W)
   val old_data = new DSBlock()
 }
 
@@ -308,7 +308,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
   }
 
   val isAMO_vec = buffer.map(e => e.is_amo && e.valid)
-  assert(PopCount(isAMO_vec) < 2.U, "AMO task need atomic")
+  assert(PopCount(isAMO_vec) < 2.U, "too many AMO-require in process")
   val haveAMO = Cat(isAMO_vec).orR
   val isAMO_id = PriorityEncoder(isAMO_vec)
 

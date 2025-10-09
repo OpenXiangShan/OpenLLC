@@ -21,7 +21,6 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2chi._
-import cc.xiangshan.openncb.NCBParameters
 import utility.{FastArbiter}
 
 class MMIODiverger(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {

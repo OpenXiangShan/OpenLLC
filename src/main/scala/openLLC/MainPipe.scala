@@ -70,7 +70,6 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     val toAtomicsUnit = ValidIO(new AtomicsMainPipe())
     val datafromAtomicsUnit = Input(UInt(64.W))
     val blockfromAtomicsUnit = Input(new DSBlock())
-    val l3AMOSingleHitTooMuch = Output(Bool())
   })
 
   val snp_s4    = io.snoopTask_s4
@@ -83,9 +82,6 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val refillData_s4 = io.refillBufResp_s4
   val rdata_s6      = io.rdataFromDS_s6
   val pipeInfo      = io.pipeInfo
-
-  val AMOReqSrcID = RegInit(0.U(3.W))
-  val AMOCNT = RegInit(0.U(2.W))
 
   /* Stage 2 */
   val task_s2 = io.taskFromArb_s2
@@ -153,20 +149,6 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   assert(!task_s3.valid || refill_task_s3 ||
     readNotSharedDirty_s3 || readUnique_s3 || makeUnique_s3 || writeBackFull_s3 || evict_s3 || makeInvalid_s3 ||
     cleanInvalid_s3 || cleanShared_s3 || writeCleanFull_s3 || writeEvictOrEvict_s3 || atomics_s3, "Unsupported opcode")
-
-  // If an AMO always comes from one core, then set l3AMOSingleHitTooMuch to true,
-  // and the DCache will stop sending atomic requests and send an acquire instead.
-  when (AMOCNT === 3.U) {
-    AMOCNT := 0.U
-    AMOReqSrcID := 5.U
-    // MAX CORE = 4
-  }.elsewhen (atomics_s3 && task_s3.bits.srcID =/= AMOReqSrcID) {
-    AMOReqSrcID := task_s3.bits.srcID
-    AMOCNT := 1.U
-  }.elsewhen (atomics_s3 && task_s3.bits.srcID === AMOReqSrcID) {
-    AMOCNT := AMOCNT + 1.U
-  }
-  io.l3AMOSingleHitTooMuch := (AMOCNT === 3.U)
 
   /**
     * Requests have different coherence states after processing

@@ -31,7 +31,6 @@ class Slice()(implicit p: Parameters) extends LLCModule {
     val snpMask = Output(Vec(numRNs, Bool()))
     val msStatus = topDownOpt.map(_ => Vec(mshrs.response, ValidIO(new ResponseInfo())))
     val l3Miss = Output(Bool())
-    val l3AMOSingleHitTooMuch = Output(Bool())
   })
 
   val txUp = io.in.rx
@@ -160,6 +159,4 @@ class Slice()(implicit p: Parameters) extends LLCModule {
   io.l3Miss := Cat(responseUnit.io.respInfo.map { r =>
     r.valid && r.bits.is_miss
   }).orR
-
-  io.l3AMOSingleHitTooMuch := mainPipe.io.l3AMOSingleHitTooMuch
 }
