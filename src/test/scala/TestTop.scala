@@ -79,7 +79,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
         channelBytes = TLChannelBeatBytes(l2Params.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(huancun.AliasField(2)),
+        requestFields = Seq(huancun.AliasField(2), WayField()),
         responseKeys = l2Params.respKey
       )
     ))
