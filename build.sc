@@ -7,7 +7,7 @@ import $file.common
 import $file.`rocket-chip`.common
 import $file.`rocket-chip`.common
 import $file.`rocket-chip`.cde.common
-import $file.`rocket-chip`.hardfloat.build
+import $file.`rocket-chip`.hardfloat.common
 
 val defaultScalaVersion = "2.13.15"
 
@@ -16,7 +16,9 @@ def defaultVersions = Map(
   "chisel-plugin" -> ivy"org.chipsalliance:::chisel-plugin:7.0.0"
 )
 
-trait HasChisel extends ScalaModule {
+val pwd = os.Path(sys.env("MILL_WORKSPACE_ROOT"))
+
+trait HasChisel extends SbtModule {
   def chiselModule: Option[ScalaModule] = None
 
   def chiselPluginJar: T[Option[PathRef]] = None
@@ -37,18 +39,24 @@ trait HasChisel extends ScalaModule {
 
 object rocketchip extends `rocket-chip`.common.RocketChipModule with HasChisel {
 
-  val rcPath = os.pwd / "rocket-chip"
+  val rcPath = pwd / "rocket-chip"
   override def millSourcePath = rcPath
 
   def mainargsIvy = ivy"com.lihaoyi::mainargs:0.7.0"
 
   def json4sJacksonIvy = ivy"org.json4s::json4s-jackson:4.0.7"
 
-  object macros extends `rocket-chip`.common.MacrosModule with HasChisel {
+  object macros extends `rocket-chip`.common.MacrosModule with SbtModule {
+
+    def scalaVersion: T[String] = T(defaultScalaVersion)
+
     def scalaReflectIvy = ivy"org.scala-lang:scala-reflect:${scalaVersion}"
   }
 
-  object cde extends `rocket-chip`.cde.common.CDEModule with HasChisel {
+  object cde extends `rocket-chip`.cde.common.CDEModule with ScalaModule {
+
+    def scalaVersion: T[String] = T(defaultScalaVersion)
+
     override def millSourcePath = rcPath / "cde" / "cde"
   }
 
@@ -64,8 +72,8 @@ object rocketchip extends `rocket-chip`.common.RocketChipModule with HasChisel {
 
 }
 
-object utility extends SbtModule with HasChisel {
-  override def millSourcePath = os.pwd / "utility"
+object utility extends HasChisel {
+  override def millSourcePath = pwd / "utility"
 
   override def moduleDeps = super.moduleDeps ++ Seq(rocketchip)
 
@@ -74,27 +82,27 @@ object utility extends SbtModule with HasChisel {
   )
 }
 
-object huancun extends SbtModule with HasChisel {
-  override def millSourcePath = os.pwd / "coupledL2" / "HuanCun"
+object huancun extends HasChisel {
+  override def millSourcePath = pwd / "coupledL2" / "HuanCun"
 
   override def moduleDeps = super.moduleDeps ++ Seq(
     rocketchip, utility
   )
 }
 
-object coupledL2 extends SbtModule with HasChisel {
-  override def millSourcePath = os.pwd / "coupledL2"
+object coupledL2 extends HasChisel {
+  override def millSourcePath = pwd / "coupledL2"
   override def moduleDeps = super.moduleDeps ++ Seq(
     rocketchip, utility, huancun
   )
 }
 
-object openNCB extends SbtModule with HasChisel {
-  override def millSourcePath = os.pwd / "openNCB"
+object openNCB extends HasChisel {
+  override def millSourcePath = pwd / "openNCB"
   override def moduleDeps = super.moduleDeps ++ Seq(rocketchip)
 }
 
-object OpenLLC extends SbtModule with HasChisel with millbuild.common.OpenLLCModule {
+object OpenLLC extends HasChisel with $file.common.OpenLLCModule {
 
   override def millSourcePath = millOuterCtx.millSourcePath
 
@@ -106,7 +114,7 @@ object OpenLLC extends SbtModule with HasChisel with millbuild.common.OpenLLCMod
 
   def openNCBModule: ScalaModule = openNCB
 
-  object test extends SbtModuleTests with TestModule.ScalaTest
+  object test extends SbtTests with TestModule.ScalaTest
 
   override def scalacOptions = super.scalacOptions() ++ Agg("-deprecation", "-feature")
 
