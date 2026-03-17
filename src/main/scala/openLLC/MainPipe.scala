@@ -66,6 +66,10 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
     /* status of each pipeline stage */
     val pipeInfo = Output(new PipeStatus())
+
+    val toAtomicsUnit = ValidIO(new AtomicsMainPipe())
+    val datafromAtomicsUnit = Input(UInt(64.W))
+    val blockfromAtomicsUnit = Input(new DSBlock())
   })
 
   val snp_s4    = io.snoopTask_s4
@@ -86,6 +90,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   pipeInfo.s2_tag := task_s2.bits.tag
   pipeInfo.s2_set := task_s2.bits.set
   pipeInfo.s2_reqID := task_s2.bits.reqID
+  pipeInfo.s2_amo := task_s2.bits.amo
 
   /* Stage 3 */
   val task_s3 = RegInit(0.U.asTypeOf(Valid(new Task())))
@@ -101,7 +106,8 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
   val req_s3         = task_s3.bits
   val opcode_s3      = req_s3.chiOpcode
-  val refill_task_s3 = req_s3.refillTask
+  val refill_task_s3 = req_s3.refillTask || req_s3.AMOrefillTask
+  val AMOref_task_s3 = req_s3.AMOrefillTask
   val srcID_s3       = req_s3.srcID
   val passDirty_s3   = req_s3.resp(2) // Resp[2: 0] = {PassDirty, CacheState[1: 0]}
 
@@ -127,10 +133,22 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val cleanShared_s3        = !refill_task_s3 && opcode_s3 === CleanShared
   val writeCleanFull_s3     = !refill_task_s3 && opcode_s3 === WriteCleanFull
   val writeEvictOrEvict_s3  = !refill_task_s3 && afterIssueEbOrElse(opcode_s3 === WriteEvictOrEvict, false.B)
+  val atomicSwap_s3         = !refill_task_s3 && opcode_s3 === AtomicSwap
+  val atomicLoad_ADD_s3     = !refill_task_s3 && opcode_s3 === AtomicLoad_ADD
+  val atomicLoad_CLR_s3     = !refill_task_s3 && opcode_s3 === AtomicLoad_CLR
+  val atomicLoad_SET_s3     = !refill_task_s3 && opcode_s3 === AtomicLoad_SET
+  val atomicLoad_EOR_s3     = !refill_task_s3 && opcode_s3 === AtomicLoad_EOR
+  val atomicLoad_SMAX_s3    = !refill_task_s3 && opcode_s3 === AtomicLoad_SMAX
+  val atomicLoad_SMIN_s3    = !refill_task_s3 && opcode_s3 === AtomicLoad_SMIN
+  val atomicLoad_UMAX_s3    = !refill_task_s3 && opcode_s3 === AtomicLoad_UMAX
+  val atomicLoad_UMIN_s3    = !refill_task_s3 && opcode_s3 === AtomicLoad_UMIN
+
+  val atomics_s3 = (atomicSwap_s3 || atomicLoad_ADD_s3 || atomicLoad_CLR_s3 || atomicLoad_SET_s3 || atomicLoad_EOR_s3 ||
+    atomicLoad_SMAX_s3 || atomicLoad_SMIN_s3 || atomicLoad_UMAX_s3 || atomicLoad_UMIN_s3) && task_s3.valid
 
   assert(!task_s3.valid || refill_task_s3 ||
     readNotSharedDirty_s3 || readUnique_s3 || makeUnique_s3 || writeBackFull_s3 || evict_s3 || makeInvalid_s3 ||
-    cleanInvalid_s3 || cleanShared_s3 || writeCleanFull_s3 || writeEvictOrEvict_s3, "Unsupported opcode")
+    cleanInvalid_s3 || cleanShared_s3 || writeCleanFull_s3 || writeEvictOrEvict_s3 || atomics_s3, "Unsupported opcode")
 
   /**
     * Requests have different coherence states after processing
@@ -158,7 +176,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val new_self_meta_s3 = WireInit(self_meta_s3)
   when(refill_task_s3) {
     new_self_meta_s3.valid := true.B
-    new_self_meta_s3.dirty := passDirty_s3 || self_hit_s3 && selfDirty_s3
+    new_self_meta_s3.dirty := passDirty_s3 || self_hit_s3 && selfDirty_s3 || AMOref_task_s3
   }
   when(exclusiveReq_s3 || invalidReq_s3) {
     new_self_meta_s3.valid := false.B
@@ -170,9 +188,9 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val new_clients_meta_s3 = WireInit(clients_meta_s3)
   new_clients_meta_s3.zipWithIndex.foreach { case (meta, i) =>
     when(srcID_s3 === i.U) {
-      meta.valid := !(releaseReq_s3 || invalidReq_s3)
+      meta.valid := !(releaseReq_s3 || invalidReq_s3 || atomics_s3)
     }.otherwise {
-      when(exclusiveReq_s3 || invalidReq_s3) {
+      when(exclusiveReq_s3 || invalidReq_s3 || atomics_s3) {
         meta.valid := false.B
       }
     }
@@ -180,7 +198,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
   /*** Client directory update ***/
   // tagArray is updated when directory access of an exclusive request does not hit
-  clientsTagW_s3.valid := task_s3.valid && exclusiveReq_s3 && !clients_hit_s3
+  clientsTagW_s3.valid := task_s3.valid && exclusiveReq_s3 && !clients_hit_s3 && !atomics_s3
   clientsTagW_s3.bits.apply(
     lineAddr = reqLineAddr_s3,
     way = clientsDirResp_s3.way
@@ -197,7 +215,8 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     sharedReq_s3 && !originalRN_hit_s3 ||
     exclusiveReq_s3 && (peerRNs_hit_s3 || !originalRN_hit_s3) ||
     releaseReq_s3 && originalRN_hit_s3 ||
-    invalidReq_s3 && peerRNs_hit_s3
+    invalidReq_s3 && peerRNs_hit_s3 || 
+    atomics_s3 && (peerRNs_hit_s3 || originalRN_hit_s3)
   )
   clientsMetaW_s3.bits.apply(
     lineAddr = reqLineAddr_s3,
@@ -239,6 +258,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   pipeInfo.s3_tag := task_s3.bits.tag
   pipeInfo.s3_set := task_s3.bits.set
   pipeInfo.s3_reqID := task_s3.bits.reqID
+  pipeInfo.s3_amo := task_s3.bits.amo
 
   /* Stage 4 */
   val task_s4 = RegInit(0.U.asTypeOf(Valid(new Task())))
@@ -260,6 +280,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val cleanShared_s4        = RegNext(cleanShared_s3, false.B)
   val writeCleanFull_s4     = RegNext(writeCleanFull_s3, false.B)
   val writeEvictOrEvict_s4  = RegNext(writeEvictOrEvict_s3, false.B)
+  val atomics_s4            = RegNext(atomics_s3, false.B)
 
   val sharedReq_s4          = RegNext(sharedReq_s3, false.B)
   val exclusiveReq_s4       = RegNext(exclusiveReq_s3, false.B)
@@ -267,9 +288,11 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val invalidReq_s4         = RegNext(invalidReq_s3, false.B)
   val cleanReq_s4           = RegNext(cleanReq_s3, false.B)
   val peerRNs_hit_s4        = RegNext(peerRNs_hit_s3, false.B)
+  val originalRN_hit_s4     = RegNext(originalRN_hit_s3, false.B)
 
   val req_s4          = task_s4.bits
-  val refill_task_s4  = req_s4.refillTask
+  val refill_task_s4  = req_s4.refillTask || req_s4.AMOrefillTask
+  val AMOref_task_s4  = req_s4.AMOrefillTask
   val srcID_s4        = req_s4.srcID
   val opcode_s4       = req_s4.chiOpcode
   val self_hit_s4     = selfDirResp_s4.hit
@@ -295,9 +318,11 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     */
   val unique_peerRN_s4 = !self_hit_s4 && peerRNs_hit_s4 && PopCount(clients_valids_vec_s4) === 1.U
   val replace_snoop_s4 = clients_meta_conflict_s4
-  val request_snoop_s4 = (exclusiveReq_s4 || invalidReq_s4) && peerRNs_hit_s4 || sharedReq_s4 && !self_hit_s4 ||
-    cleanReq_s4 && unique_peerRN_s4
-  val need_snoop_s4 = replace_snoop_s4 || request_snoop_s4
+  val request_snoop_s4 = (exclusiveReq_s4 || invalidReq_s4) && peerRNs_hit_s4 ||
+    sharedReq_s4 && !self_hit_s4 || cleanReq_s4 && unique_peerRN_s4 ||
+    atomics_s4 && (originalRN_hit_s4 || peerRNs_hit_s4)
+  val atomics_snoop_s4 = atomics_s4 && request_snoop_s4
+  val need_snoop_s4 = replace_snoop_s4 || request_snoop_s4 || atomics_snoop_s4
   val snp_address_s4 = Mux(
     replace_snoop_s4,
     Cat(clientsDirResp_s4.tag, clientsDirResp_s4.set, req_s4.bank, req_s4.off),
@@ -319,7 +344,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     ).asBools
   )
   snp_task_s4.chiOpcode := Mux(
-    replace_snoop_s4,
+    replace_snoop_s4 || atomics_snoop_s4,
     SnpUnique,
     MuxLookup(
       Cat(readUnique_s4, readNotSharedDirty_s4, makeUnique_s4 || makeInvalid_s4, cleanInvalid_s4, cleanShared_s4),
@@ -335,7 +360,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     )
   )
   snp_task_s4.retToSrc := Mux(
-    !replace_snoop_s4,
+    (!replace_snoop_s4) || (!atomics_snoop_s4),
     Mux(makeUnique_s4 || makeInvalid_s4 || cleanInvalid_s4 || cleanShared_s4, false.B, !self_hit_s4),
     true.B
   )
@@ -352,7 +377,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
       replace_snoop_s4,
       clients_valids_vec_s4.asUInt,
       Mux(
-        sharedReq_s4,
+        sharedReq_s4 || atomics_s4,
         peerRNs_valids_vec_s4.asUInt,
         Cat(Seq.fill(numRNs)(false.B))
       )
@@ -392,33 +417,36 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   comp_task_s4.replSnp := replace_snoop_s4
   comp_task_s4.tgtID := srcID_s4
   comp_task_s4.homeNID := req_s4.tgtID
-  comp_task_s4.dbID := req_s4.reqID
+  comp_task_s4.dbID := Mux(atomics_s4, Cat(1.U(1.W), req_s4.reqID.tail(1)), req_s4.reqID)
   comp_task_s4.resp := ParallelPriorityMux(
     Seq(respSC_s4, respUC_s4, respUD_s4, respI_s4),
     Seq(SC, UC, UD_PD, I)
   )
 
   comp_s4.valid := task_s4.valid && (
-    releaseReq_s4 || invalidReq_s4 || cleanReq_s4 || makeUnique_s4 || writeCleanFull_s4 ||
+    releaseReq_s4 || invalidReq_s4 || cleanReq_s4 || makeUnique_s4 || writeCleanFull_s4 || atomics_s4 ||
     (readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4
   )
-  comp_s4.bits.state.s_comp := false.B
+  comp_s4.bits.state.s_comp := Mux(!atomics_s4, false.B, true.B)
+  comp_s4.bits.state.s_dbid := !(atomics_s4 && !refill_task_s4)
   comp_s4.bits.state.s_urgentRead := true.B
-  comp_s4.bits.state.w_datRsp := !(readNotSharedDirty_s4 || readUnique_s4)
+  comp_s4.bits.state.w_datRsp := !(readNotSharedDirty_s4 || readUnique_s4 || (atomics_s4 && !self_hit_s4))
   comp_s4.bits.state.w_snpRsp := !Cat(snpVec_comp_s4).orR
   comp_s4.bits.state.w_compack := !(readUnique_s4 || readNotSharedDirty_s4 || makeUnique_s4 ||
     writeEvictOrEvict_s4 && self_hit_s4)
+  comp_s4.bits.state.w_ncbwrdata := !(atomics_s4 && !refill_task_s4)
   comp_s4.bits.state.w_comp := !(cleanReq_s4 && self_hit_s4 && selfDirty_s4)
   comp_s4.bits.task := comp_task_s4
   comp_s4.bits.is_miss := !self_hit_s4
+  comp_s4.bits.is_amo := atomics_s4
 
   /**  Read/Write request to MemUnit **/
   val mem_task_s4 = WireInit(req_s4)
-  mem_task_s4.tag := Mux(refill_task_s4, selfDirResp_s4.tag, req_s4.tag)
-  mem_task_s4.set := Mux(refill_task_s4, selfDirResp_s4.set, req_s4.set)
+  mem_task_s4.tag := Mux(refill_task_s4 && !AMOref_task_s4, selfDirResp_s4.tag, req_s4.tag)
+  mem_task_s4.set := Mux(refill_task_s4 && !AMOref_task_s4, selfDirResp_s4.set, req_s4.set)
   mem_task_s4.txnID := req_s4.reqID
   mem_task_s4.homeNID := req_s4.tgtID
-  mem_task_s4.chiOpcode := Mux(refill_task_s4 || cleanReq_s4 || writeCleanFull_s4, WriteNoSnpFull, ReadNoSnp)
+  mem_task_s4.chiOpcode := Mux(refill_task_s4 || cleanReq_s4 || writeCleanFull_s4 || AMOref_task_s4, WriteNoSnpFull, ReadNoSnp)
   mem_task_s4.size := log2Ceil(64).U
   mem_task_s4.allowRetry := true.B
   mem_task_s4.order := OrderEncodings.None // TODO: order requirement?
@@ -427,7 +455,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   mem_task_s4.expCompAck := false.B
 
   // need ReadNoSnp/WriteNoSnp downwards
-  val memRead_s4 = (readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4 && !peerRNs_hit_s4
+  val memRead_s4 = (readNotSharedDirty_s4 || readUnique_s4 || (atomics_s4 && !refill_task_s4)) && !self_hit_s4 && !peerRNs_hit_s4
   val memWrite_s4 = cleanReq_s4 && unique_peerRN_s4 || writeCleanFull_s4
   mem_s4.valid := task_s4.valid && (memRead_s4 || memWrite_s4)
   mem_s4.bits.state.s_issueReq := false.B
@@ -438,71 +466,100 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   mem_s4.bits.task := mem_task_s4
 
   /** DS read/write **/
-  val dataUnready_s4 = (readNotSharedDirty_s4 || readUnique_s4) && self_hit_s4
+  val dataUnready_s4 = (readNotSharedDirty_s4 || readUnique_s4 || atomics_s4) && self_hit_s4
   val cleanSelfDirty_s4 = refill_task_s4 && !self_hit_s4 && self_meta_s4.valid && selfDirty_s4 ||
     cleanReq_s4 && self_hit_s4 && selfDirty_s4
+  val atomics_hit_s4 = atomics_s4 && self_hit_s4
 
-  io.toDS_s4.read.valid := task_s4.valid && (dataUnready_s4 || cleanSelfDirty_s4)
+  io.toDS_s4.read.valid := task_s4.valid && (dataUnready_s4 || cleanSelfDirty_s4 || atomics_hit_s4)
   io.toDS_s4.read.bits.way := selfDirResp_s4.way
   io.toDS_s4.read.bits.set := selfDirResp_s4.set
   io.toDS_s4.write.valid := task_s4.valid && refill_task_s4
   io.toDS_s4.write.bits.way := selfDirResp_s4.way
   io.toDS_s4.write.bits.set := selfDirResp_s4.set
-  io.toDS_s4.wdata := refillData_s4
+  io.toDS_s4.wdata := Mux(AMOref_task_s4, io.blockfromAtomicsUnit, refillData_s4)
 
-  val req_drop_s4 = !dataUnready_s4 && !cleanSelfDirty_s4
+  val req_drop_s4 = (!dataUnready_s4 && !cleanSelfDirty_s4) && !(atomics_s4 && !refill_task_s4 && atomics_hit_s4) && !AMOref_task_s4
 
   pipeInfo.s4_valid := task_s4.valid
   pipeInfo.s4_tag := task_s4.bits.tag
   pipeInfo.s4_set := task_s4.bits.set
   pipeInfo.s4_reqID := task_s4.bits.reqID
+  pipeInfo.s4_amo := task_s4.bits.amo
 
   /* Stage 5 */
   val task_s5 = RegInit(0.U.asTypeOf(Valid(new Task())))
+  val task_amoref_s5 = RegInit(0.U.asTypeOf(Valid(new Task())))
   task_s5.valid := task_s4.valid && !req_drop_s4
+  task_amoref_s5.valid := task_s4.valid && !req_drop_s4
+  val atomics_s5 = RegInit(false.B)
+  val AMOref_task_s5  = RegInit(false.B)
   when(task_s4.valid && !req_drop_s4) {
-    task_s5.bits := Mux(dataUnready_s4, comp_task_s4, mem_task_s4)
+    task_s5.bits := Mux(dataUnready_s4 || AMOref_task_s4, comp_task_s4, mem_task_s4)
+    task_amoref_s5.bits := mem_task_s4
+    atomics_s5 := atomics_s4
+    AMOref_task_s5  := AMOref_task_s4
   }
 
   pipeInfo.s5_valid := task_s5.valid
   pipeInfo.s5_tag := task_s5.bits.tag
   pipeInfo.s5_set := task_s5.bits.set
   pipeInfo.s5_reqID := task_s5.bits.reqID
+  pipeInfo.s5_amo := task_s5.bits.amo
 
   /* Stage 6 */
   val task_s6 = RegInit(0.U.asTypeOf(Valid(new Task())))
+  val task_amoref_s6 = RegInit(0.U.asTypeOf(Valid(new Task())))
+  val atomics_s6 = RegInit(false.B)
   val cleanSelfDirty_s6 = RegNextN(cleanSelfDirty_s4, 2, Some(false.B))
   task_s6.valid := task_s5.valid
+  task_amoref_s6.valid := task_amoref_s5.valid
   when(task_s5.valid) {
     task_s6.bits := task_s5.bits
+    task_amoref_s6.bits := task_amoref_s5.bits
+    atomics_s6 := atomics_s5
   }
 
   val req_s6 = task_s6.bits
+  val AMOref_req_s6 = task_amoref_s6.bits
+  val AMOref_task_s6  = req_s6.AMOrefillTask
 
   // Return CompData when local cache access hits
-  comp_s6.valid := task_s6.valid && !cleanSelfDirty_s6
+  comp_s6.valid := task_s6.valid && !cleanSelfDirty_s6 && !(atomics_s6)
   comp_s6.bits.state.s_comp := false.B
+  comp_s6.bits.state.s_dbid := true.B
   comp_s6.bits.state.s_urgentRead := true.B
   comp_s6.bits.state.w_datRsp := true.B
   comp_s6.bits.state.w_snpRsp := !Cat(req_s6.snpVec).orR
-  comp_s6.bits.state.w_compack := false.B
+  comp_s6.bits.state.w_compack := AMOref_task_s6
   comp_s6.bits.state.w_comp := true.B
+  comp_s6.bits.state.w_ncbwrdata := true.B
   comp_s6.bits.task := req_s6
-  comp_s6.bits.data.get := rdata_s6
+  comp_s6.bits.data.get := Mux(AMOref_task_s6, Fill(8, io.datafromAtomicsUnit).asTypeOf(new DSBlock), rdata_s6)
   comp_s6.bits.is_miss := false.B
+  comp_s6.bits.is_amo := false.B
 
   // Update memory when a dirty block is cleaned
-  mem_s6.valid := task_s6.valid && cleanSelfDirty_s6
+  mem_s6.valid := task_s6.valid && (cleanSelfDirty_s6 || AMOref_task_s6)
   mem_s6.bits.state.s_issueReq := false.B
   mem_s6.bits.state.s_issueDat := false.B
   mem_s6.bits.state.w_datRsp := true.B
   mem_s6.bits.state.w_dbid := false.B
   mem_s6.bits.state.w_comp := false.B
-  mem_s6.bits.task := req_s6
-  mem_s6.bits.data.get := rdata_s6
+  mem_s6.bits.task := Mux(AMOref_task_s6, AMOref_req_s6, req_s6)
+  mem_s6.bits.data.get := Mux(AMOref_task_s6, io.blockfromAtomicsUnit, rdata_s6)
 
   pipeInfo.s6_valid := task_s6.valid
   pipeInfo.s6_tag := task_s6.bits.tag
   pipeInfo.s6_set := task_s6.bits.set
   pipeInfo.s6_reqID := task_s6.bits.reqID
+  pipeInfo.s6_amo := task_s6.bits.amo
+
+  val toAtomics_s4 = task_s4.valid && (atomics_s4 && !AMOref_task_s4 && !atomics_hit_s4)
+  val toAtomics_s6 = task_s6.valid && (atomics_s6 && !AMOref_task_s6)
+
+  io.toAtomicsUnit.valid := toAtomics_s4 || toAtomics_s6
+  io.toAtomicsUnit.bits.task := Mux(toAtomics_s4, req_s4, req_s6)
+  io.toAtomicsUnit.bits.dataisfromDS := toAtomics_s6
+  io.toAtomicsUnit.bits.datafromDS := rdata_s6
 }

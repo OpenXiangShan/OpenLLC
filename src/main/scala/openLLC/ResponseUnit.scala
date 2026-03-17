@@ -27,10 +27,12 @@ import utility.{FastArbiter}
 class ResponseState(implicit p: Parameters) extends LLCBundle {
   val s_comp = Bool()
   val s_urgentRead = Bool()
+  val s_dbid = Bool()
   val w_datRsp = Bool()
   val w_snpRsp = Bool()
   val w_compack = Bool()
   val w_comp = Bool()
+  val w_ncbwrdata = Bool()
 }
 
 class ResponseRequest(withData: Boolean)(implicit p: Parameters) extends LLCBundle {
@@ -38,13 +40,16 @@ class ResponseRequest(withData: Boolean)(implicit p: Parameters) extends LLCBund
   val task  = new Task()
   val data  = if (withData) Some(new DSBlock()) else None
   val is_miss = Bool()
+  val is_amo = Bool()
 }
 
 class ResponseEntry(implicit p: Parameters) extends TaskEntry {
   val state = new ResponseState()
   val data = new DSBlock()
+  val amo_data = UInt(XLEN.W)
   val beatValids = Vec(beatSize, Bool())
   val is_miss = Bool()
+  val is_amo = Bool()
 }
 
 class ResponseInfo(implicit p: Parameters) extends BlockInfo {
@@ -52,6 +57,12 @@ class ResponseInfo(implicit p: Parameters) extends BlockInfo {
   val w_compdata = Bool()
   val w_compack = Bool()
   val is_miss = Bool()
+  val is_amo = Bool()
+}
+
+class AtomicsInfo(implicit p: Parameters) extends LLCBundle {
+  val ncbwrdata = UInt(XLEN.W)
+  val old_data = new DSBlock()
 }
 
 class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
@@ -62,6 +73,8 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
       val alloc_s6 = Flipped(ValidIO(new ResponseRequest(withData = true)))
     }
 
+    val toAtomicsUnit = ValidIO(new AtomicsInfo())
+
     /* response from downstream memory */
     val snRxdat = Flipped(ValidIO(new RespWithData()))
     val snRxrsp = Flipped(ValidIO(new Resp()))
@@ -70,6 +83,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     val bypassData = Flipped(Vec(beatSize, ValidIO(new RespWithData())))
 
     /* snoop response data from upper-level cache */
+    /* also can be NCBWrData from upper-level cache */
     val rnRxdat = Flipped(ValidIO(new RespWithData()))
   
     /* CompAck/SnpResp from upstream RXRSP channel */
@@ -91,6 +105,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
   val memData    = io.snRxdat
   val memResp    = io.snRxrsp
   val snpData    = io.rnRxdat
+  val NCBWrData  = io.rnRxdat
   val bypassData = io.bypassData
   val txrsp      = io.txrsp
   val txdat      = io.txdat
@@ -128,6 +143,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     entry.data := alloc_s6.bits.data.get
     entry.beatValids := VecInit(Seq.fill(beatSize)(true.B))
     entry.is_miss := alloc_s6.bits.is_miss
+    entry.is_amo := alloc_s6.bits.is_amo
   }
 
   when(canAlloc_s4) {
@@ -137,6 +153,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     entry.task := alloc_s4.bits.task
     entry.beatValids := VecInit(Seq.fill(beatSize)(false.B))
     entry.is_miss := alloc_s4.bits.is_miss
+    entry.is_amo := alloc_s4.bits.is_amo
   }
 
   assert(!(full_s6 && alloc_s6.valid || full_s4 && alloc_s4.valid) , "ResponseBuf overflow")
@@ -261,18 +278,56 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     }
   }
 
+  // only for AMO by now
+  def handleAMOData(ncbwrdata: Valid[RespWithData]): Unit = {
+    when(ncbwrdata.valid) {
+      val update_vec = buffer.map(e =>
+        Cat(1.U(1.W), e.task.reqID.tail(1)) === ncbwrdata.bits.txnID && e.valid && e.state.s_comp && e.state.w_compack &&
+          e.state.s_dbid && !e.state.w_ncbwrdata && ncbwrdata.bits.opcode === NonCopyBackWrData && e.is_amo
+      )
+      assert(PopCount(update_vec) < 2.U, "Response task repeated")
+      val canUpdate = Cat(update_vec).orR
+      val update_id = PriorityEncoder(update_vec)
+      when(canUpdate) {
+        val entry = buffer(update_id)
+        // amo_data by now only one beat
+        entry.state.w_ncbwrdata := true.B
+
+        entry.amo_data := ncbwrdata.bits.data.data(63, 0)
+      }
+    }
+  }
+
   handleMemResp(memData, isBypass = false)
   handleMemResp(memResp)
   handleSnpResp(io.rnRxrsp, snpData)
   handleCompAck(io.rnRxrsp)
+  handleAMOData(NCBWrData)
   for (i <- 0 until beatSize) {
     handleMemResp(bypassData(i), isBypass = true)
   }
 
+  val isAMO_vec = buffer.map(e => e.is_amo && e.valid)
+  assert(PopCount(isAMO_vec) < 2.U, "too many AMO-require in process")
+  val haveAMO = Cat(isAMO_vec).orR
+  val isAMO_id = PriorityEncoder(isAMO_vec)
+
+  val amo_entry = buffer(isAMO_id)
+  io.toAtomicsUnit.valid := haveAMO && ((amo_entry.valid && amo_entry.state.w_snpRsp && amo_entry.state.w_datRsp &&
+    amo_entry.state.w_ncbwrdata && amo_entry.state.s_dbid))
+  io.toAtomicsUnit.bits.ncbwrdata := amo_entry.amo_data
+  io.toAtomicsUnit.bits.old_data := amo_entry.data
+
   /* Issue */
   val isRead = buffer.map(e => e.task.chiOpcode === ReadUnique || e.task.chiOpcode === ReadNotSharedDirty)
-  txdatArb.io.in.zip(buffer).zip(isRead).foreach { case ((in, e), r) =>
-    in.valid := e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.s_urgentRead && !e.state.s_comp && r
+  val isAMO = buffer.map(e => e.task.chiOpcode === AtomicLoad_ADD || e.task.chiOpcode === AtomicSwap ||
+    e.task.chiOpcode === AtomicLoad_CLR || e.task.chiOpcode === AtomicLoad_EOR || e.task.chiOpcode === AtomicLoad_SET ||
+    e.task.chiOpcode === AtomicLoad_SMAX || e.task.chiOpcode === AtomicLoad_SMIN || e.task.chiOpcode === AtomicLoad_UMAX ||
+    e.task.chiOpcode === AtomicLoad_UMIN)
+  txdatArb.io.in.zip(buffer).zip(isRead).zip(isAMO).foreach { case (((in, e), r), a) =>
+    in.valid := (e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.s_urgentRead && !e.state.s_comp && r) ||
+                (e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.s_urgentRead && !e.state.s_comp && a && 
+                 e.state.w_ncbwrdata && e.state.s_dbid)
     in.bits.task := e.task
     in.bits.data := e.data
   }
@@ -285,23 +340,39 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     entry.state.s_comp := true.B
   }
 
-  txrspArb.io.in.zip(buffer).zip(isRead).foreach { case ((in, e), r) =>
-    in.valid := e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.w_comp && e.state.s_urgentRead &&
-      !e.state.s_comp && !r
+  txrspArb.io.in.zip(buffer).zip(isRead).zip(isAMO).foreach { case (((in, e), r), a) =>
+    in.valid := (e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.w_comp && e.state.s_urgentRead && !e.state.s_comp && !r) ||
+                (e.valid && !e.state.s_dbid && e.state.w_comp && e.state.s_urgentRead && e.state.s_comp && a)
     in.bits := e.task
   }
   txrspArb.io.out.ready := txrsp.ready
   txrsp.valid := txrspArb.io.out.valid
   txrsp.bits := txrspArb.io.out.bits
   txrsp.bits.chiOpcode := Mux(
-    txrspArb.io.out.bits.chiOpcode === WriteBackFull || txrspArb.io.out.bits.chiOpcode === WriteCleanFull ||
-    afterIssueEbOrElse(txrspArb.io.out.bits.chiOpcode === WriteEvictOrEvict, false.B) && buffer(txrspArb.io.chosen).is_miss,
-    CompDBIDResp,
-    Comp
+    txrspArb.io.out.bits.chiOpcode === AtomicSwap ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_ADD ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_CLR ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_SET ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_EOR ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_SMAX ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_SMIN ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_UMAX ||
+    txrspArb.io.out.bits.chiOpcode === AtomicLoad_UMIN,
+    DBIDResp,
+    Mux(
+      txrspArb.io.out.bits.chiOpcode === WriteBackFull || txrspArb.io.out.bits.chiOpcode === WriteCleanFull ||
+      afterIssueEbOrElse(txrspArb.io.out.bits.chiOpcode === WriteEvictOrEvict, false.B) && buffer(txrspArb.io.chosen).is_miss,
+      CompDBIDResp,
+      Comp
+    )
   )
-  when(txrsp.fire) {
+  when(txrsp.fire && txrsp.bits.chiOpcode =/= DBIDResp) {
     val entry = buffer(txrspArb.io.chosen)
     entry.state.s_comp := true.B
+  }
+  when(txrsp.fire && txrsp.bits.chiOpcode === DBIDResp) {
+    val entry = buffer(txrspArb.io.chosen)
+    entry.state.s_dbid := true.B
   }
 
   // if none of the snoops return the required data,
@@ -327,8 +398,8 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
   urgentRead.bits := urgentTask
 
   /* Dealloc */
-  val will_free_vec = buffer.map(e => e.valid && e.state.w_datRsp && e.state.s_comp && e.state.w_compack &&
-    e.state.w_snpRsp && e.state.w_comp && e.state.s_urgentRead)
+  val will_free_vec = buffer.map(e => e.valid && e.state.w_datRsp && e.state.s_comp && e.state.s_dbid &&
+    e.state.w_compack && e.state.w_snpRsp && e.state.w_comp && e.state.w_ncbwrdata && e.state.s_urgentRead)
   buffer.zip(will_free_vec).foreach { case (e, v) =>
     when(v) {
       e.valid := false.B
@@ -349,6 +420,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
     m.bits.w_compack := buffer(i).state.w_compack || io.rnRxrsp.valid && io.rnRxrsp.bits.opcode === CompAck &&
       io.rnRxrsp.bits.txnID === buffer(i).task.reqID
     m.bits.is_miss := buffer(i).is_miss
+    m.bits.is_amo := buffer(i).is_amo
   }
 
   /* Performance Counter */
