@@ -199,6 +199,12 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       val l2Hint = Valid(new L2ToL1Hint)
     }))
 
+    val io_powerdown = IO(Vec(numCores, new Bundle {
+      val flushAll = Input(Bool())
+      val flushAllDone = Output(Bool())
+      val cpuHalt = Input(Bool())
+    }))
+
     val cycle = RegInit(0.U(64.W))
     cycle := cycle + 1.U
 
@@ -272,6 +278,10 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       dontTouch(l2.module.io)
 
       l2.module.io.l2_hint <> io_l1(i).l2Hint
+      
+      l2.module.io.l2Flush.foreach(_ := io_powerdown(i).flushAll)
+      io_powerdown(i).flushAllDone := l2.module.io.l2FlushDone.getOrElse(false.B)
+      l2.module.io_cpu_halt.foreach(_ := io_powerdown(i).cpuHalt)
 
       l2.module.io.hartId := i.U
       l2.module.io.pfCtrlFromCore := DontCare
@@ -355,7 +365,10 @@ object TestTopSoCHelper {
         dataCheck           = Some("oddparity"),
 
         // SAM for tester ICN: Home Node ID = 33
-        sam                 = Seq(AddressSet.everything -> 33)
+        sam                 = Seq(AddressSet.everything -> 33),
+
+        // L2 flush all
+        enableL2Flush       = true
       )
       case OpenLLCParamKey => OpenLLCParam(
         ways                = 2,
