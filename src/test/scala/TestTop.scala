@@ -205,6 +205,8 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       val cpuHalt = Input(Bool())
     }))
 
+    val io_linkdown = IO(Vec(numCores, Output(Bool())))
+
     val cycle = RegInit(0.U(64.W))
     cycle := cycle + 1.U
 
@@ -288,6 +290,10 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       l2.module.io_nodeID := i.U(NODEID_WIDTH.W)
       l2.module.io.debugTopDown := DontCare
       l2.module.io.l2_tlb_req <> DontCare
+
+      io_linkdown(i) := !l2.module.io_chi.syscoreq && !l2.module.io_chi.syscoack &&
+        !l2.module.io_chi.tx.linkactivereq && !l2.module.io_chi.tx.linkactiveack &&
+        !l2.module.io_chi.rx.linkactivereq && !l2.module.io_chi.rx.linkactiveack
     }
 
     if (!l3Params.FPGAPlatform && l3Params.enableCHILog) {
