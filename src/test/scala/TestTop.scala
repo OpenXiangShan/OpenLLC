@@ -207,6 +207,8 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
 
     val io_linkdown = IO(Vec(numCores, Output(Bool())))
 
+    val io_resetsep = IO(Vec(numCores, Input(Bool())))
+
     val cycle = RegInit(0.U(64.W))
     cycle := cycle + 1.U
 
@@ -290,6 +292,8 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       l2.module.io_nodeID := i.U(NODEID_WIDTH.W)
       l2.module.io.debugTopDown := DontCare
       l2.module.io.l2_tlb_req <> DontCare
+
+      l2.module.reset := io_resetsep(i) || reset.asBool
 
       io_linkdown(i) := !l2.module.io_chi.syscoreq && !l2.module.io_chi.syscoack &&
         !l2.module.io_chi.tx.linkactivereq && !l2.module.io_chi.tx.linkactiveack &&
