@@ -206,8 +206,11 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       val clean = Input(Bool())
     })
 
+    val l2hintParams: Parameters = p.alterPartial {
+      case EdgeInKey => l2_nodes(0).node.in.head._2
+    }
     val io_l1 = IO(Vec(numCores, new Bundle() {
-      val l2Hint = Valid(new L2ToL1Hint)
+      val l2Hint = Valid(new L2ToL1Hint()(l2hintParams))
     }))
 
     val cycle = RegInit(0.U(64.W))
