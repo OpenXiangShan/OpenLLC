@@ -212,6 +212,31 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       })
     })
 
+    val io_powerdown = IO(Vec(numCores, new Bundle {
+      val flushAll = Input(Bool())
+      val flushAllDone = Output(Bool())
+      val cpuHalt = Input(Bool())
+    }))
+
+    val io_probe_chi = IO(Vec(numCores, new Bundle {
+      val txreq_flit = Output(UInt((new CHIREQ).getWidth.W))
+      val txrsp_flit = Output(UInt((new CHIRSP).getWidth.W))
+      val txdat_flit = Output(UInt((new CHIDAT).getWidth.W))
+      val rxsnp_flit = Output(UInt((new CHISNP).getWidth.W))
+      val rxrsp_flit = Output(UInt((new CHIRSP).getWidth.W))
+      val rxdat_flit = Output(UInt((new CHIDAT).getWidth.W))
+      val txreq_flitv = Output(Bool())
+      val txrsp_flitv = Output(Bool())
+      val txdat_flitv = Output(Bool())
+      val rxsnp_flitv = Output(Bool())
+      val rxrsp_flitv = Output(Bool())
+      val rxdat_flitv = Output(Bool())
+    }))
+
+    val io_linkdown = IO(Vec(numCores, Output(Bool())))
+
+    val io_resetsep = IO(Vec(numCores, Input(Bool())))
+
     val cycle = RegInit(0.U(64.W))
     cycle := cycle + 1.U
 
@@ -245,7 +270,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
     val l3 = Module(new OpenLLC()(new Config((site, here, up) => {
       case CHIIssue => issue
       case OpenLLCParamKey => l3Params.copy(
-        clientCaches    = Seq.fill(numCores)(l2Params.copy(ways = 2, sets = 2)),
+        clientCaches    = Seq.fill(numCores)(l2Params.copy(ways = 4, sets = 16)),
         fullAddressBits = ADDR_WIDTH,
         hartIds         = 0 until numCores
       )
@@ -263,6 +288,20 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
     })))
 
     l2_nodes.zipWithIndex.foreach { case (l2, i) =>
+
+      io_probe_chi(i).txreq_flit := l2.module.io_chi.tx.req.flit
+      io_probe_chi(i).txrsp_flit := l2.module.io_chi.tx.rsp.flit
+      io_probe_chi(i).txdat_flit := l2.module.io_chi.tx.dat.flit
+      io_probe_chi(i).rxsnp_flit := l2.module.io_chi.rx.snp.flit
+      io_probe_chi(i).rxrsp_flit := l2.module.io_chi.rx.rsp.flit
+      io_probe_chi(i).rxdat_flit := l2.module.io_chi.rx.dat.flit
+
+      io_probe_chi(i).txreq_flitv := l2.module.io_chi.tx.req.flitv
+      io_probe_chi(i).txrsp_flitv := l2.module.io_chi.tx.rsp.flitv
+      io_probe_chi(i).txdat_flitv := l2.module.io_chi.tx.dat.flitv
+      io_probe_chi(i).rxsnp_flitv := l2.module.io_chi.rx.snp.flitv
+      io_probe_chi(i).rxrsp_flitv := l2.module.io_chi.rx.rsp.flitv
+      io_probe_chi(i).rxdat_flitv := l2.module.io_chi.rx.dat.flitv
 
       if (!l3Params.FPGAPlatform && l3Params.enableCHILog) {
         CLogB.logFlitsRNOfRNF(
@@ -285,12 +324,22 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       dontTouch(l2.module.io)
 
       l2.module.io.l2_hint <> io_l1(i).l2Hint
+      
+      l2.module.io.l2Flush.foreach(_ := io_powerdown(i).flushAll)
+      io_powerdown(i).flushAllDone := l2.module.io.l2FlushDone.getOrElse(false.B)
+      l2.module.io_cpu_halt.foreach(_ := io_powerdown(i).cpuHalt)
 
       l2.module.io.hartId := i.U
       l2.module.io.pfCtrlFromCore := DontCare
       l2.module.io_nodeID := i.U(NODEID_WIDTH.W)
       l2.module.io.debugTopDown := DontCare
       l2.module.io.l2_tlb_req <> DontCare
+
+      l2.module.reset := io_resetsep(i) || reset.asBool
+
+      io_linkdown(i) := !l2.module.io_chi.syscoreq && !l2.module.io_chi.syscoack &&
+        !l2.module.io_chi.tx.linkactivereq && !l2.module.io_chi.tx.linkactiveack &&
+        !l2.module.io_chi.rx.linkactivereq && !l2.module.io_chi.rx.linkactiveack
     }
 
     if (!l3Params.FPGAPlatform && l3Params.enableCHILog) {
@@ -353,7 +402,7 @@ object TestTopSoCHelper {
     val config = new Config((_, _, _) => {
       case L2ParamKey => L2Param(
         ways                = 4,
-        sets                = 128,
+        sets                = 16,
         clientCaches        = Seq(L1Param(aliasBitsOpt = Some(2))),
         // echoField        = Seq(DirtyField),
         enablePerf          = enablePerf,
@@ -368,11 +417,14 @@ object TestTopSoCHelper {
         dataCheck           = Some("oddparity"),
 
         // SAM for tester ICN: Home Node ID = 33
-        sam                 = Seq(AddressSet.everything -> 33)
+        sam                 = Seq(AddressSet.everything -> 33),
+
+        // L2 flush all
+        enableL2Flush       = true
       )
       case OpenLLCParamKey => OpenLLCParam(
-        ways                = 2,
-        sets                = 2,
+        ways                = 4,
+        sets                = 32,
         banks               = 1,
         clientCaches        = Seq(L2Param()),
         enablePerf          = enablePerf,
