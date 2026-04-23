@@ -205,6 +205,21 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
       val cpuHalt = Input(Bool())
     }))
 
+    val io_probe_chi = IO(Vec(numCores, new Bundle {
+      val txreq_flit = Output(UInt((new CHIREQ).getWidth.W))
+      val txrsp_flit = Output(UInt((new CHIRSP).getWidth.W))
+      val txdat_flit = Output(UInt((new CHIDAT).getWidth.W))
+      val rxsnp_flit = Output(UInt((new CHISNP).getWidth.W))
+      val rxrsp_flit = Output(UInt((new CHIRSP).getWidth.W))
+      val rxdat_flit = Output(UInt((new CHIDAT).getWidth.W))
+      val txreq_flitv = Output(Bool())
+      val txrsp_flitv = Output(Bool())
+      val txdat_flitv = Output(Bool())
+      val rxsnp_flitv = Output(Bool())
+      val rxrsp_flitv = Output(Bool())
+      val rxdat_flitv = Output(Bool())
+    }))
+
     val io_linkdown = IO(Vec(numCores, Output(Bool())))
 
     val io_resetsep = IO(Vec(numCores, Input(Bool())))
@@ -260,6 +275,20 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
     })))
 
     l2_nodes.zipWithIndex.foreach { case (l2, i) =>
+
+      io_probe_chi(i).txreq_flit := l2.module.io_chi.tx.req.flit
+      io_probe_chi(i).txrsp_flit := l2.module.io_chi.tx.rsp.flit
+      io_probe_chi(i).txdat_flit := l2.module.io_chi.tx.dat.flit
+      io_probe_chi(i).rxsnp_flit := l2.module.io_chi.rx.snp.flit
+      io_probe_chi(i).rxrsp_flit := l2.module.io_chi.rx.rsp.flit
+      io_probe_chi(i).rxdat_flit := l2.module.io_chi.rx.dat.flit
+
+      io_probe_chi(i).txreq_flitv := l2.module.io_chi.tx.req.flitv
+      io_probe_chi(i).txrsp_flitv := l2.module.io_chi.tx.rsp.flitv
+      io_probe_chi(i).txdat_flitv := l2.module.io_chi.tx.dat.flitv
+      io_probe_chi(i).rxsnp_flitv := l2.module.io_chi.rx.snp.flitv
+      io_probe_chi(i).rxrsp_flitv := l2.module.io_chi.rx.rsp.flitv
+      io_probe_chi(i).rxdat_flitv := l2.module.io_chi.rx.dat.flitv
 
       if (!l3Params.FPGAPlatform && l3Params.enableCHILog) {
         CLogB.logFlitsRNOfRNF(
