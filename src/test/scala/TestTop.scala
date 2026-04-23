@@ -257,7 +257,7 @@ class TestTopSoC(numCores: Int = 1, numULAgents: Int = 0, banks: Int = 1, issue:
     val l3 = Module(new OpenLLC()(new Config((site, here, up) => {
       case CHIIssue => issue
       case OpenLLCParamKey => l3Params.copy(
-        clientCaches    = Seq.fill(numCores)(l2Params.copy(ways = 2, sets = 2)),
+        clientCaches    = Seq.fill(numCores)(l2Params.copy(ways = 4, sets = 16)),
         fullAddressBits = ADDR_WIDTH,
         hartIds         = 0 until numCores
       )
@@ -389,7 +389,7 @@ object TestTopSoCHelper {
     val config = new Config((_, _, _) => {
       case L2ParamKey => L2Param(
         ways                = 4,
-        sets                = 128,
+        sets                = 16,
         clientCaches        = Seq(L1Param(aliasBitsOpt = Some(2))),
         // echoField        = Seq(DirtyField),
         enablePerf          = enablePerf,
@@ -410,8 +410,8 @@ object TestTopSoCHelper {
         enableL2Flush       = true
       )
       case OpenLLCParamKey => OpenLLCParam(
-        ways                = 2,
-        sets                = 2,
+        ways                = 4,
+        sets                = 32,
         banks               = 1,
         clientCaches        = Seq(L2Param()),
         enablePerf          = enablePerf,
