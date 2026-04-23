@@ -68,6 +68,7 @@ trait HasOpenLLCParameters {
   val p: Parameters
   def cacheParams = p(OpenLLCParamKey)
 
+  def XLEN = 64
   def blockBytes = cacheParams.blockBytes
   def beatBytes = cacheParams.beatBytes
   def beatSize = blockBytes / beatBytes
