@@ -12,6 +12,9 @@ test-top-l3:
 test-top-l2l3:
 	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_SingleCore -td build --target systemverilog --split-verilog
 
+test-top-matrix:
+	mill -i OpenLLC.test.runMain openLLC.TestTopMatrix -td build --target systemverilog --split-verilog
+
 test-top-l2l3l2:
 	mill -i OpenLLC.test.runMain openLLC.TestTopSoC_DualCore -td build --target systemverilog --split-verilog
 
