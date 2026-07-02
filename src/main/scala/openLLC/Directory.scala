@@ -38,6 +38,7 @@ trait HasClientInfo { this: HasOpenLLCParameters =>
 class SelfMetaEntry(implicit p: Parameters) extends Bundle {
   val valid = Bool()
   val dirty = Bool()
+  val matrixAB = Bool()
 }
 
 object SelfMetaEntry {
@@ -45,10 +46,11 @@ object SelfMetaEntry {
     val init = WireInit(0.U.asTypeOf(new SelfMetaEntry))
     init
   }
-  def apply(valid: Bool, dirty: Bool)(implicit p: Parameters) = {
+  def apply(valid: Bool, dirty: Bool, matrixAB: Bool = false.B)(implicit p: Parameters) = {
     val entry = Wire(new SelfMetaEntry)
     entry.valid := valid
     entry.dirty := dirty
+    entry.matrixAB := matrixAB
     entry
   }
 }
@@ -235,7 +237,8 @@ class SubDirectory[T <: Data](
   // PLRU: update replacer only when Snoopable-Read hit or refill, at stage 3
   if (replacement == "plru") {
     val updateHit = reqValid_s3 && hit_s3 &&
-      (replacerInfo_s3.opcode === ReadUnique || replacerInfo_s3.opcode === ReadNotSharedDirty)
+      (replacerInfo_s3.opcode === ReadUnique || replacerInfo_s3.opcode === ReadNotSharedDirty ||
+        replacerInfo_s3.opcode === ReadNoSnp)
     val updateRefill = reqValid_s3 && req_s3.replacerInfo.refill
     replacerWen := updateHit || updateRefill
     val next_state_s3 = repl.get_next_state(repl_state_s3, way_s3)

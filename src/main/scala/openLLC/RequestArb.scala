@@ -63,12 +63,13 @@ class RequestArb(implicit p: Parameters) extends LLCModule with HasClientInfo wi
   val reqID_s1 = task_s1.bits.reqID
 
   val isReadNotSharedDirty_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === ReadNotSharedDirty
+  val isReadNoSnp_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === ReadNoSnp
   val isReadUnique_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === ReadUnique
   val isCleanInvalid_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === CleanInvalid
   val isCleanShared_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === CleanShared
   val isWriteCleanFull_s1 = !task_s1.bits.refillTask && task_s1.bits.chiOpcode === WriteCleanFull
 
-  val isRead_s1  = isReadNotSharedDirty_s1 || isReadUnique_s1
+  val isRead_s1  = isReadNoSnp_s1 || isReadNotSharedDirty_s1 || isReadUnique_s1
   val isClean_s1 = isCleanInvalid_s1 || isCleanShared_s1 || isWriteCleanFull_s1
 
   // To prevent data hazards caused by read-after-write conflicts in the directory,

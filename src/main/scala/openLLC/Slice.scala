@@ -115,6 +115,7 @@ class Slice()(implicit p: Parameters) extends LLCModule {
 
   refillUnit.io.read <> reqArb.io.refillBufRead_s2
   refillUnit.io.respData <> rxdatUp.io.out
+  refillUnit.io.memRespData <> rxdatDown.io.out
   refillUnit.io.resp <> rxrspUp.io.out
   refillUnit.io.alloc <> mainPipe.io.refillReq_s4
 

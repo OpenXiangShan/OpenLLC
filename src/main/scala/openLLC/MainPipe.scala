@@ -113,11 +113,8 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     Mux(i.U =/= srcID_s3, clients_meta_s3(i).valid, false.B) 
   }).orR && clients_hit_s3
 
-  if (inclusion == "Exclusive") {
-    assert(!(self_hit_s3 && clients_hit_s3), "Non-exclusive?")
-  }
-
   val readNotSharedDirty_s3 = !refill_task_s3 && opcode_s3 === ReadNotSharedDirty
+  val readNoSnp_s3          = !refill_task_s3 && opcode_s3 === ReadNoSnp
   val readUnique_s3         = !refill_task_s3 && opcode_s3 === ReadUnique
   val makeUnique_s3         = !refill_task_s3 && opcode_s3 === MakeUnique
   val writeBackFull_s3      = !refill_task_s3 && opcode_s3 === WriteBackFull
@@ -128,8 +125,12 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val writeCleanFull_s3     = !refill_task_s3 && opcode_s3 === WriteCleanFull
   val writeEvictOrEvict_s3  = !refill_task_s3 && afterIssueEbOrElse(opcode_s3 === WriteEvictOrEvict, false.B)
 
+  if (inclusion == "Exclusive") {
+    assert(!(self_hit_s3 && clients_hit_s3 && !readNoSnp_s3), "Non-exclusive?")
+  }
+
   assert(!task_s3.valid || refill_task_s3 ||
-    readNotSharedDirty_s3 || readUnique_s3 || makeUnique_s3 || writeBackFull_s3 || evict_s3 || makeInvalid_s3 ||
+    readNoSnp_s3 || readNotSharedDirty_s3 || readUnique_s3 || makeUnique_s3 || writeBackFull_s3 || evict_s3 || makeInvalid_s3 ||
     cleanInvalid_s3 || cleanShared_s3 || writeCleanFull_s3 || writeEvictOrEvict_s3, "Unsupported opcode")
 
   /**
@@ -159,9 +160,11 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   when(refill_task_s3) {
     new_self_meta_s3.valid := true.B
     new_self_meta_s3.dirty := passDirty_s3 || self_hit_s3 && selfDirty_s3
+    new_self_meta_s3.matrixAB := req_s3.chiOpcode === ReadNoSnp
   }
   when(exclusiveReq_s3 || invalidReq_s3) {
     new_self_meta_s3.valid := false.B
+    new_self_meta_s3.matrixAB := false.B
   }
   when(cleanReq_s3) {
     new_self_meta_s3.dirty := false.B
@@ -177,10 +180,15 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
       }
     }
   }
+  when(readNoSnp_s3 && !clients_hit_s3) {
+    new_clients_meta_s3.zipWithIndex.foreach { case (meta, i) =>
+      meta.valid := srcID_s3 === i.U
+    }
+  }
 
   /*** Client directory update ***/
   // tagArray is updated when directory access of an exclusive request does not hit
-  clientsTagW_s3.valid := task_s3.valid && exclusiveReq_s3 && !clients_hit_s3
+  clientsTagW_s3.valid := task_s3.valid && (exclusiveReq_s3 || readNoSnp_s3) && !clients_hit_s3
   clientsTagW_s3.bits.apply(
     lineAddr = reqLineAddr_s3,
     way = clientsDirResp_s3.way
@@ -196,6 +204,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   clientsMetaW_s3.valid := task_s3.valid && (
     sharedReq_s3 && !originalRN_hit_s3 ||
     exclusiveReq_s3 && (peerRNs_hit_s3 || !originalRN_hit_s3) ||
+    readNoSnp_s3 && !originalRN_hit_s3 ||
     releaseReq_s3 && originalRN_hit_s3 ||
     invalidReq_s3 && peerRNs_hit_s3
   )
@@ -251,6 +260,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val clientsDirResp_s4 = RegEnable(clientsDirResp_s3, 0.U.asTypeOf(clientsDirResp_s3), task_s3.valid)
 
   val readNotSharedDirty_s4 = RegNext(readNotSharedDirty_s3, false.B)
+  val readNoSnp_s4          = RegNext(readNoSnp_s3, false.B)
   val readUnique_s4         = RegNext(readUnique_s3, false.B)
   val makeUnique_s4         = RegNext(makeUnique_s3, false.B)
   val writeBackFull_s4      = RegNext(writeBackFull_s3, false.B)
@@ -280,6 +290,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
   /** Send Snoop task **/
   val clients_valids_vec_s4 = VecInit(clients_meta_s4.map(_.valid))
+  val allRNs_vec_s4 = VecInit(Seq.fill(numRNs)(true.B))
   val peerRNs_valids_vec_s4 = VecInit(clients_valids_vec_s4.zipWithIndex.map { case (valid, i) =>
     Mux(i.U === srcID_s4, false.B, valid)
   })
@@ -295,31 +306,41 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     */
   val unique_peerRN_s4 = !self_hit_s4 && peerRNs_hit_s4 && PopCount(clients_valids_vec_s4) === 1.U
   val replace_snoop_s4 = clients_meta_conflict_s4
+  val matrixAB_self_replace_s4 = readNoSnp_s4 && !self_hit_s4 && self_meta_s4.valid &&
+    self_meta_s4.matrixAB && !selfDirty_s4
   val request_snoop_s4 = (exclusiveReq_s4 || invalidReq_s4) && peerRNs_hit_s4 || sharedReq_s4 && !self_hit_s4 ||
     cleanReq_s4 && unique_peerRN_s4
-  val need_snoop_s4 = replace_snoop_s4 || request_snoop_s4
+  val need_snoop_s4 = replace_snoop_s4 || request_snoop_s4 || matrixAB_self_replace_s4
   val snp_address_s4 = Mux(
-    replace_snoop_s4,
-    Cat(clientsDirResp_s4.tag, clientsDirResp_s4.set, req_s4.bank, req_s4.off),
-    Cat(req_s4.tag, req_s4.set, req_s4.bank, req_s4.off)
+    matrixAB_self_replace_s4,
+    Cat(selfDirResp_s4.tag, selfDirResp_s4.set, req_s4.bank, req_s4.off),
+    Mux(
+      replace_snoop_s4,
+      Cat(clientsDirResp_s4.tag, clientsDirResp_s4.set, req_s4.bank, req_s4.off),
+      Cat(req_s4.tag, req_s4.set, req_s4.bank, req_s4.off)
+    )
   )
 
   val snp_task_s4 = WireInit(0.U.asTypeOf(req_s4))
   snp_task_s4.tag := parseAddress(snp_address_s4)._1
   snp_task_s4.set := parseAddress(snp_address_s4)._2
   snp_task_s4.bank := parseAddress(snp_address_s4)._3
-  snp_task_s4.replSnp := replace_snoop_s4
+  snp_task_s4.replSnp := replace_snoop_s4 || matrixAB_self_replace_s4
   snp_task_s4.txnID := req_s4.reqID
   snp_task_s4.doNotGoToSD := true.B
   snp_task_s4.snpVec := VecInit(
     Mux(
-      replace_snoop_s4,
-      clients_valids_vec_s4.asUInt,
-      peerRNs_valids_vec_s4.asUInt
+      matrixAB_self_replace_s4,
+      allRNs_vec_s4.asUInt,
+      Mux(
+        replace_snoop_s4,
+        clients_valids_vec_s4.asUInt,
+        peerRNs_valids_vec_s4.asUInt
+      )
     ).asBools
   )
   snp_task_s4.chiOpcode := Mux(
-    replace_snoop_s4,
+    replace_snoop_s4 || matrixAB_self_replace_s4,
     SnpUnique,
     MuxLookup(
       Cat(readUnique_s4, readNotSharedDirty_s4, makeUnique_s4 || makeInvalid_s4, cleanInvalid_s4, cleanShared_s4),
@@ -335,9 +356,13 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     )
   )
   snp_task_s4.retToSrc := Mux(
-    !replace_snoop_s4,
-    Mux(makeUnique_s4 || makeInvalid_s4 || cleanInvalid_s4 || cleanShared_s4, false.B, !self_hit_s4),
-    true.B
+    matrixAB_self_replace_s4,
+    false.B,
+    Mux(
+      !replace_snoop_s4,
+      Mux(makeUnique_s4 || makeInvalid_s4 || cleanInvalid_s4 || cleanShared_s4, false.B, !self_hit_s4),
+      true.B
+    )
   )
 
   snp_s4.valid := task_s4.valid && need_snoop_s4
@@ -349,28 +374,37 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   // or when they are shared among multiple cores
   val snpVec_refill_s4 = VecInit(
     Mux(
-      replace_snoop_s4,
-      clients_valids_vec_s4.asUInt,
+      matrixAB_self_replace_s4,
+      allRNs_vec_s4.asUInt,
       Mux(
-        sharedReq_s4,
-        peerRNs_valids_vec_s4.asUInt,
-        Cat(Seq.fill(numRNs)(false.B))
+        replace_snoop_s4,
+        clients_valids_vec_s4.asUInt,
+        Mux(
+          sharedReq_s4,
+          peerRNs_valids_vec_s4.asUInt,
+          Cat(Seq.fill(numRNs)(false.B))
+        )
       )
     ).asBools
   )
   refill_s4.valid := task_s4.valid && (
-    (sharedReq_s4 || writeBackFull_s4 || writeEvictOrEvict_s4) && !self_hit_s4 ||
+    (readNoSnp_s4 || sharedReq_s4 || writeBackFull_s4 || writeEvictOrEvict_s4) && !self_hit_s4 ||
     replace_snoop_s4
   )
   refill_s4.bits.state.s_refill := false.B
   refill_s4.bits.state.w_datRsp := false.B
   refill_s4.bits.state.w_snpRsp := !Cat(snpVec_refill_s4).orR
   refill_s4.bits.task := req_s4
-  refill_s4.bits.task.tag := parseAddress(snp_address_s4)._1
-  refill_s4.bits.task.set := parseAddress(snp_address_s4)._2
+  val refill_address_s4 = Mux(
+    replace_snoop_s4,
+    snp_address_s4,
+    Cat(req_s4.tag, req_s4.set, req_s4.bank, req_s4.off)
+  )
+  refill_s4.bits.task.tag := parseAddress(refill_address_s4)._1
+  refill_s4.bits.task.set := parseAddress(refill_address_s4)._2
   refill_s4.bits.task.refillTask := true.B
   refill_s4.bits.task.snpVec := snpVec_refill_s4
-  refill_s4.bits.task.replSnp := replace_snoop_s4
+  refill_s4.bits.task.replSnp := replace_snoop_s4 || matrixAB_self_replace_s4
   refill_s4.bits.dirResult.self := selfDirResp_s4
   refill_s4.bits.dirResult.clients := clientsDirResp_s4
   refill_s4.bits.isWrite := writeBackFull_s4 || writeEvictOrEvict_s4
@@ -379,17 +413,21 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   val respSC_s4 = sharedReq_s4
   val respUC_s4 = makeUnique_s4 || !makeUnique_s4 && exclusiveReq_s4 && (!selfDirty_s4 || !self_hit_s4)
   val respUD_s4 = !makeUnique_s4 && exclusiveReq_s4 && self_hit_s4 && selfDirty_s4
-  val respI_s4  = releaseReq_s4 || invalidReq_s4 || cleanReq_s4 || writeCleanFull_s4
+  val respI_s4  = readNoSnp_s4 || releaseReq_s4 || invalidReq_s4 || cleanReq_s4 || writeCleanFull_s4
   val snpVec_comp_s4 = VecInit(
     Mux(
-      request_snoop_s4,
-      peerRNs_valids_vec_s4.asUInt,
-      Cat(Seq.fill(numRNs)(false.B))
+      matrixAB_self_replace_s4,
+      allRNs_vec_s4.asUInt,
+      Mux(
+        request_snoop_s4,
+        peerRNs_valids_vec_s4.asUInt,
+        Cat(Seq.fill(numRNs)(false.B))
+      )
     ).asBools
   )
   val comp_task_s4 = WireInit(req_s4)
   comp_task_s4.snpVec := snpVec_comp_s4
-  comp_task_s4.replSnp := replace_snoop_s4
+  comp_task_s4.replSnp := replace_snoop_s4 || matrixAB_self_replace_s4
   comp_task_s4.tgtID := srcID_s4
   comp_task_s4.homeNID := req_s4.tgtID
   comp_task_s4.dbID := req_s4.reqID
@@ -400,11 +438,11 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
   comp_s4.valid := task_s4.valid && (
     releaseReq_s4 || invalidReq_s4 || cleanReq_s4 || makeUnique_s4 || writeCleanFull_s4 ||
-    (readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4
+    (readNoSnp_s4 || readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4
   )
   comp_s4.bits.state.s_comp := false.B
   comp_s4.bits.state.s_urgentRead := true.B
-  comp_s4.bits.state.w_datRsp := !(readNotSharedDirty_s4 || readUnique_s4)
+  comp_s4.bits.state.w_datRsp := !(readNoSnp_s4 || readNotSharedDirty_s4 || readUnique_s4)
   comp_s4.bits.state.w_snpRsp := !Cat(snpVec_comp_s4).orR
   comp_s4.bits.state.w_compack := !(readUnique_s4 || readNotSharedDirty_s4 || makeUnique_s4 ||
     writeEvictOrEvict_s4 && self_hit_s4)
@@ -427,7 +465,8 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   mem_task_s4.expCompAck := false.B
 
   // need ReadNoSnp/WriteNoSnp downwards
-  val memRead_s4 = (readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4 && !peerRNs_hit_s4
+  val memRead_s4 = readNoSnp_s4 && !self_hit_s4 ||
+    (readNotSharedDirty_s4 || readUnique_s4) && !self_hit_s4 && !peerRNs_hit_s4
   val memWrite_s4 = cleanReq_s4 && unique_peerRN_s4 || writeCleanFull_s4
   mem_s4.valid := task_s4.valid && (memRead_s4 || memWrite_s4)
   mem_s4.bits.state.s_issueReq := false.B
@@ -438,7 +477,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   mem_s4.bits.task := mem_task_s4
 
   /** DS read/write **/
-  val dataUnready_s4 = (readNotSharedDirty_s4 || readUnique_s4) && self_hit_s4
+  val dataUnready_s4 = (readNoSnp_s4 || readNotSharedDirty_s4 || readUnique_s4) && self_hit_s4
   val cleanSelfDirty_s4 = refill_task_s4 && !self_hit_s4 && self_meta_s4.valid && selfDirty_s4 ||
     cleanReq_s4 && self_hit_s4 && selfDirty_s4
 
@@ -485,7 +524,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   comp_s6.bits.state.s_urgentRead := true.B
   comp_s6.bits.state.w_datRsp := true.B
   comp_s6.bits.state.w_snpRsp := !Cat(req_s6.snpVec).orR
-  comp_s6.bits.state.w_compack := false.B
+  comp_s6.bits.state.w_compack := req_s6.chiOpcode === ReadNoSnp
   comp_s6.bits.state.w_comp := true.B
   comp_s6.bits.task := req_s6
   comp_s6.bits.data.get := rdata_s6

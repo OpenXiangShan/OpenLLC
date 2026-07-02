@@ -61,6 +61,9 @@ class RefillUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     val respData = Flipped(ValidIO(new RespWithData()))
     val resp = Flipped(ValidIO(new Resp()))
 
+    /* CompData from downstream memory for inclusive ReadNoSnp refills */
+    val memRespData = Flipped(ValidIO(new RespWithData()))
+
     /* refill data read */
     val read = Flipped(ValidIO(new RefillBufRead()))
     val data = Output(new DSBlock())
@@ -71,6 +74,7 @@ class RefillUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
 
   val rsp     = io.resp
   val rspData = io.respData
+  val memRspData = io.memRespData
 
   /* Data Structure */
   val buffer   = RegInit(VecInit(Seq.fill(mshrs.refill)(0.U.asTypeOf(new RefillEntry()))))
@@ -94,40 +98,59 @@ class RefillUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   assert(!full || !io.alloc.valid, "RefillBuf overflow")
 
   /* Update state */
-  when(rspData.valid) {
-    val update_vec = buffer.map(e => (e.task.reqID === rspData.bits.txnID) && e.valid)
-    assert(PopCount(update_vec) < 2.U, "Refill task repeated")
-    val canUpdate = Cat(update_vec).orR
-    val update_id = PriorityEncoder(update_vec)
-    when(canUpdate) {
-      val entry = buffer(update_id)
-      val isWrite = entry.isWrite
-      val inv_CBWrData = rspData.bits.resp === I
-      val cancel = isWrite && inv_CBWrData
-      val clients_hit = entry.dirResult.clients.hit
-      val clients_meta = entry.dirResult.clients.meta
+  def handleRespData(rspData: Valid[RespWithData], fromMem: Boolean): Unit = {
+    when(rspData.valid) {
+      val update_vec = buffer.map(e => (e.task.reqID === rspData.bits.txnID) && e.valid)
+      assert(PopCount(update_vec) < 2.U, "Refill task repeated")
+      val canUpdate = Cat(update_vec).orR
+      val update_id = PriorityEncoder(update_vec)
+      when(canUpdate) {
+        val entry = buffer(update_id)
+        val acceptRespData = if (fromMem) entry.task.chiOpcode === ReadNoSnp else true.B
+        val isWrite = entry.isWrite
+        val inv_CBWrData = rspData.bits.resp === I
+        val cancel = isWrite && inv_CBWrData
+        val ignoreReplSnpData = entry.task.replSnp && entry.task.chiOpcode === ReadNoSnp &&
+          rspData.bits.opcode === SnpRespData
+        val clients_hit = entry.dirResult.clients.hit
+        val clients_meta = entry.dirResult.clients.meta
+        val clientOwnerHit = clients_hit && clients_meta(rspData.bits.srcID).valid
+        val ownerlessFullWriteback = isWrite && !inv_CBWrData && !entry.dirResult.self.hit && (
+          entry.task.chiOpcode === WriteBackFull ||
+          afterIssueEbOrElse(entry.task.chiOpcode === WriteEvictOrEvict, false.B)
+        )
 
-      assert(
-        !isWrite || inv_CBWrData || clients_hit && clients_meta(rspData.bits.srcID).valid,
-        "Non-exist block release?(addr: 0x%x)",
-        Cat(entry.task.tag, entry.task.set, entry.task.bank, entry.task.off)
-      )
+        when(acceptRespData) {
+          // The snoop filter may have evicted the client entry before the RN writes back
+          // a full dirty block. Accept that data and install it into the LLC self cache.
+          assert(
+            !isWrite || inv_CBWrData || clientOwnerHit || ownerlessFullWriteback,
+            "Non-exist block release?(addr: 0x%x)",
+            Cat(entry.task.tag, entry.task.set, entry.task.bank, entry.task.off)
+          )
 
-      val beatId = rspData.bits.dataID >> log2Ceil(beatBytes / 16)
-      val newBeatValids = entry.beatValids.asUInt | UIntToOH(beatId)
-      entry.valid := !cancel
-      entry.beatValids := VecInit(newBeatValids.asBools)
-      entry.state.w_datRsp := newBeatValids.andR
-      entry.data.data(beatId) := rspData.bits.data
-      entry.task.resp := rspData.bits.resp
-      when(rspData.bits.opcode === SnpRespData) {
-        val src_idOH  = UIntToOH(rspData.bits.srcID)(numRNs - 1, 0)
-        val newSnpVec = VecInit((entry.task.snpVec.asUInt & ~src_idOH).asBools)
-        entry.task.snpVec := newSnpVec
-        entry.state.w_snpRsp := !Cat(newSnpVec).orR
+          val beatId = rspData.bits.dataID >> log2Ceil(beatBytes / 16)
+          val newBeatValids = entry.beatValids.asUInt | UIntToOH(beatId)
+          entry.valid := !cancel
+          when(!ignoreReplSnpData) {
+            entry.beatValids := VecInit(newBeatValids.asBools)
+            entry.state.w_datRsp := newBeatValids.andR
+            entry.data.data(beatId) := rspData.bits.data
+            entry.task.resp := rspData.bits.resp
+          }
+          when(rspData.bits.opcode === SnpRespData) {
+            val src_idOH  = UIntToOH(rspData.bits.srcID)(numRNs - 1, 0)
+            val newSnpVec = VecInit((entry.task.snpVec.asUInt & ~src_idOH).asBools)
+            entry.task.snpVec := newSnpVec
+            entry.state.w_snpRsp := !Cat(newSnpVec).orR
+          }
+        }
       }
     }
   }
+
+  handleRespData(rspData, fromMem = false)
+  handleRespData(memRspData, fromMem = true)
 
   when(rsp.valid) {
     val update_vec = buffer.map(e =>

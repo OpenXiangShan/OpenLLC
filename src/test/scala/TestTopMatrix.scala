@@ -34,7 +34,8 @@ class TestTopMatrix(
   numMAgents: Int = 1,
   banks: Int = 1,
   issue: String = Issue.Eb,
-  extTime: Boolean = true
+  extTime: Boolean = true,
+  matrixABNoSnpGet: Boolean = true
 )(implicit p: Parameters) extends LazyModule with HasCHIMsgParameters {
 
   /*   L1D(L1I)* Matrix*  L1D(L1I)* Matrix*  ...
@@ -115,6 +116,7 @@ class TestTopMatrix(
     )
     case EnableCHI => true
     case EnableMatrix => true
+    case EnableMatrixABNoSnpGet => matrixABNoSnpGet
     case CHIIssue => issue
     case huancun.BankBitsKey => log2Ceil(banks)
     case MaxHartIdBits => log2Up(numCores)
@@ -369,6 +371,7 @@ Usage: TestTopMatrix [<--option> <values>]
       --fpga <1>                generate for FPGA platform
       --chiseldb <1>            enable ChiselDB
       --tllog <1>               enable TLLogger under ChiselDB
+      --matrix-ab-nc <0|1>      enable A/B Matrix Get ReadNoSnp path, 1 by default
   """
 
   if (args.contains("--help")) {
@@ -386,6 +389,7 @@ Usage: TestTopMatrix [<--option> <values>]
   var onFPGAPlatform: Boolean = false
   var enableChiselDB: Boolean = false
   var enableTLLog: Boolean = false
+  var matrixABNoSnpGet: Boolean = true
 
   val varArgsToDrop = args.sliding(2, 1).zipWithIndex.collect {
     case (Array("--core", value), i) => (numCores = value.toInt, i)
@@ -395,6 +399,7 @@ Usage: TestTopMatrix [<--option> <values>]
     case (Array("--fpga", value), i) => (onFPGAPlatform = value.toInt != 0, i)
     case (Array("--chiseldb", value), i) => (enableChiselDB = value.toInt != 0, i)
     case (Array("--tllog", value), i) => (enableTLLog = value.toInt != 0, i)
+    case (Array("--matrix-ab-nc", value), i) => (matrixABNoSnpGet = value.toInt != 0, i)
   }
 
   varArgsToDrop.map(_._2).foreach { i =>
@@ -442,7 +447,9 @@ Usage: TestTopMatrix [<--option> <values>]
   CLogB.init(enableCHILog)
   ChiselDB.init(enableChiselDB_)
 
-  val top = DisableMonitors(p => LazyModule(new TestTopMatrix(numCores, numULAgents, numMAgents, numBanks)(p)))(config)
+  val top = DisableMonitors(p =>
+    LazyModule(new TestTopMatrix(numCores, numULAgents, numMAgents, numBanks, matrixABNoSnpGet = matrixABNoSnpGet)(p))
+  )(config)
 
   (new ChiselStage).execute(varArgs.toArray, Seq(
     ChiselGeneratorAnnotation(() => top.module),

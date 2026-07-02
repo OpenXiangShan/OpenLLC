@@ -191,7 +191,7 @@ class MemUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   // the read request has received a response.
   val blockByResp = Cat(
     io.respInfo.map(e => e.valid && !e.bits.w_compdata && e.bits.w_snpRsp &&
-    (e.bits.opcode === ReadUnique || e.bits.opcode === ReadNotSharedDirty) &&
+    (e.bits.opcode === ReadUnique || e.bits.opcode === ReadNotSharedDirty || e.bits.opcode === ReadNoSnp) &&
     e.bits.reqID === txreqArb.io.out.bits.reqID && txreqArb.io.out.bits.chiOpcode === WriteNoSnpFull)
   ).orR
   txreq.valid := txreqArb.io.out.valid && !blockByResp || urgentRead.valid && !bypass_ur
