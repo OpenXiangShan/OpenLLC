@@ -61,7 +61,7 @@ class RefillUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
     val respData = Flipped(ValidIO(new RespWithData()))
     val resp = Flipped(ValidIO(new Resp()))
 
-    /* CompData from downstream memory for inclusive ReadNoSnp refills */
+    /* CompData from downstream memory for inclusive ReadOnce refills */
     val memRespData = Flipped(ValidIO(new RespWithData()))
 
     /* refill data read */
@@ -106,11 +106,11 @@ class RefillUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
       val update_id = PriorityEncoder(update_vec)
       when(canUpdate) {
         val entry = buffer(update_id)
-        val acceptRespData = if (fromMem) entry.task.chiOpcode === ReadNoSnp else true.B
+        val acceptRespData = if (fromMem) entry.task.chiOpcode === ReadOnce else true.B
         val isWrite = entry.isWrite
         val inv_CBWrData = rspData.bits.resp === I
         val cancel = isWrite && inv_CBWrData
-        val ignoreReplSnpData = entry.task.replSnp && entry.task.chiOpcode === ReadNoSnp &&
+        val ignoreReplSnpData = entry.task.replSnp && entry.task.chiOpcode === ReadOnce &&
           rspData.bits.opcode === SnpRespData
         val clients_hit = entry.dirResult.clients.hit
         val clients_meta = entry.dirResult.clients.meta

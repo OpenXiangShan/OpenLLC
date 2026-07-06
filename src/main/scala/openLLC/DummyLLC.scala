@@ -119,7 +119,8 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
   // 2. Set task registers
   when (alloc) {
     val opcode = reqArb.io.out.bits.opcode
-    val isSnoopableRead = opcode === ReadUnique || opcode === ReadNotSharedDirty
+    val isReadOnce = opcode === ReadOnce
+    val isSnoopableRead = opcode === ReadUnique || opcode === ReadNotSharedDirty || isReadOnce
     val isDataless = opcode === MakeUnique
     val isWriteBackFull = opcode === WriteBackFull
     val isEvict = opcode === Evict
@@ -162,7 +163,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
       s_comp := false.B
     }
 
-    when (isSnoopableRead || isDataless || isReadNoSnp && reqArb.io.out.bits.expCompAck) {
+    when ((isSnoopableRead || isDataless || isReadNoSnp) && reqArb.io.out.bits.expCompAck) {
       w_compack := false.B
     }
 
@@ -223,6 +224,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
     snp.srcID := req.tgtID
     snp.txnID := 0.U
     snp.opcode := ParallelLookUp(req.opcode, Seq(
+      ReadOnce -> SnpOnce,
       ReadUnique -> SnpUnique,
       ReadNotSharedDirty -> SnpNotSharedDirty,
       MakeUnique -> SnpMakeInvalid
@@ -270,7 +272,7 @@ class DummyLLCImp(numRNs: Int)(wrapper: DummyLLC) extends LazyModuleImp(wrapper)
     dat.resp := Mux(
       req.opcode === ReadUnique,
       Mux(snpGotDirty, CHICohStates.UD_PD, CHICohStates.UC),
-      Mux(isReadNoSnp, CHICohStates.I, CHICohStates.SC)
+      Mux(isReadNoSnp || req.opcode === ReadOnce, CHICohStates.I, CHICohStates.SC)
     )
   }
 

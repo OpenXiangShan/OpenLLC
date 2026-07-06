@@ -209,7 +209,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
 
       val repl_update_vec = buffer.map(e =>
         e.task.reqID === snpData.bits.txnID && e.valid && e.task.replSnp &&
-          e.task.chiOpcode === ReadNoSnp && snpData.bits.opcode === SnpRespData
+          e.task.chiOpcode === ReadOnce && snpData.bits.opcode === SnpRespData
       )
       assert(PopCount(repl_update_vec) < 2.U, "Response task repeated")
       val replCanUpdate = Cat(repl_update_vec).orR
@@ -286,7 +286,7 @@ class ResponseUnit(implicit p: Parameters) extends LLCModule with HasCHIOpcodes 
 
   /* Issue */
   val isRead = buffer.map(e =>
-    e.task.chiOpcode === ReadUnique || e.task.chiOpcode === ReadNotSharedDirty || e.task.chiOpcode === ReadNoSnp
+    e.task.chiOpcode === ReadUnique || e.task.chiOpcode === ReadNotSharedDirty || e.task.chiOpcode === ReadOnce
   )
   txdatArb.io.in.zip(buffer).zip(isRead).foreach { case ((in, e), r) =>
     in.valid := e.valid && e.state.w_datRsp && e.state.w_snpRsp && e.state.s_urgentRead && !e.state.s_comp && r
