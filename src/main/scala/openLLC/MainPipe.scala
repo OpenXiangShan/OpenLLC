@@ -180,15 +180,9 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
       }
     }
   }
-  when(readOnce_s3 && !clients_hit_s3) {
-    new_clients_meta_s3.zipWithIndex.foreach { case (meta, i) =>
-      meta.valid := srcID_s3 === i.U
-    }
-  }
-
   /*** Client directory update ***/
   // tagArray is updated when directory access of an exclusive request does not hit
-  clientsTagW_s3.valid := task_s3.valid && (exclusiveReq_s3 || readOnce_s3) && !clients_hit_s3
+  clientsTagW_s3.valid := task_s3.valid && exclusiveReq_s3 && !clients_hit_s3
   clientsTagW_s3.bits.apply(
     lineAddr = reqLineAddr_s3,
     way = clientsDirResp_s3.way
@@ -204,7 +198,6 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   clientsMetaW_s3.valid := task_s3.valid && (
     sharedReq_s3 && !originalRN_hit_s3 ||
     exclusiveReq_s3 && (peerRNs_hit_s3 || !originalRN_hit_s3) ||
-    readOnce_s3 && !originalRN_hit_s3 ||
     releaseReq_s3 && originalRN_hit_s3 ||
     invalidReq_s3 && peerRNs_hit_s3
   )
@@ -296,7 +289,7 @@ class MainPipe(implicit p: Parameters) extends LLCModule with HasCHIOpcodes {
   })
 
   val clients_meta_conflict_s4 = !clients_hit_s4 && clients_valids_vec_s4.asUInt.orR &&
-    (readOnce_s4 || readNotSharedDirty_s4 || readUnique_s4 || makeUnique_s4)
+    (readNotSharedDirty_s4 || readUnique_s4 || makeUnique_s4)
   /**
     * snoop occurs when:
     * 1. conflict miss of client directory
