@@ -26,9 +26,15 @@ import scala.collection.mutable.{Map}
 import utility.{FastArbiter}
 
 object TargetBinder {
-  def route(in: PortIO, map: Map[AddressSet, Int])(implicit p: Parameters): Map[Int, PortIO] = {
+  def route(
+    in: PortIO,
+    map: Map[AddressSet, Int],
+    defaultReturnRoute: Option[Int] = None
+  )(implicit p: Parameters): Map[Int, PortIO] = {
     val sam = SAM(map.toSeq)
-    val outSize = map.values.toSet.size
+    val routeIds = map.values.toSet
+    val outSize = routeIds.size
+    require(defaultReturnRoute.forall(routeIds.contains))
     val inner = Wire(new DecoupledPortIO())
     val outer = Wire(Vec(outSize, new DecoupledPortIO()))
     val out = Wire(Vec(outSize, new PortIO()))
@@ -54,8 +60,20 @@ object TargetBinder {
     rxdatArb.io.out.ready := inner.rx.dat.ready
     linkMonitor.io.in <> in
 
-    for ((key, i) <- map.values.toSet.zipWithIndex) {
+    for ((key, i) <- routeIds.zipWithIndex) {
       val linkMonitor = Module(new TransmitterLinkMonitor())
+      val rspRouteMatch = if (defaultReturnRoute.contains(key)) {
+        inner.tx.rsp.bits.tgtID === key.U ||
+          !routeIds.toSeq.map(inner.tx.rsp.bits.tgtID === _.U).reduce(_ || _)
+      } else {
+        inner.tx.rsp.bits.tgtID === key.U
+      }
+      val datRouteMatch = if (defaultReturnRoute.contains(key)) {
+        inner.tx.dat.bits.tgtID === key.U ||
+          !routeIds.toSeq.map(inner.tx.dat.bits.tgtID === _.U).reduce(_ || _)
+      } else {
+        inner.tx.dat.bits.tgtID === key.U
+      }
       rxsnpArb.io.in(i).valid := outer(i).rx.snp.valid
       rxrspArb.io.in(i).valid := outer(i).rx.rsp.valid
       rxdatArb.io.in(i).valid := outer(i).rx.dat.valid
@@ -64,8 +82,8 @@ object TargetBinder {
       rxdatArb.io.in(i).bits := outer(i).rx.dat.bits
 
       outer(i).tx.req.valid := inner.tx.req.valid && inner.tx.req.bits.tgtID === key.U
-      outer(i).tx.rsp.valid := inner.tx.rsp.valid && inner.tx.rsp.bits.tgtID === key.U
-      outer(i).tx.dat.valid := inner.tx.dat.valid && inner.tx.dat.bits.tgtID === key.U
+      outer(i).tx.rsp.valid := inner.tx.rsp.valid && rspRouteMatch
+      outer(i).tx.dat.valid := inner.tx.dat.valid && datRouteMatch
       outer(i).rx.snp.ready := rxsnpArb.io.out.fire && rxsnpArb.io.chosen === i.U
       outer(i).rx.rsp.ready := rxrspArb.io.out.fire && rxrspArb.io.chosen === i.U
       outer(i).rx.dat.ready := rxdatArb.io.out.fire && rxdatArb.io.chosen === i.U
